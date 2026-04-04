@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>フリマ出品アシスタント</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#ef4444">
+
+  <!-- iOS Safari PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="出品アシスト">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans',
+                   'Noto Sans JP', 'Yu Gothic', sans-serif;
+    }
+    .preview-text { white-space: pre-wrap; word-break: break-all; }
+    input[type=checkbox] { accent-color: #ef4444; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f1f1; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // ===== 定数 =====
+    const CATEGORIES = ['家電', '衣類', 'ホビー', '家具', '本', 'その他'];
+    const CONDITIONS = ['新品未使用', '未使用に近い', '目立った傷や汚れなし', 'やや傷や汚れあり', '傷や汚れあり'];
+    const SHIPPING_METHODS = ['らくらくメルカリ便', 'ゆうゆうメルカリ便', '宅急便', '未定'];
+    const SHIPPING_DAYS = ['1〜2日以内', '2〜3日以内', '4〜7日以内'];
+
+    const SHIPPING_COSTS = {
+      'らくらくメルカリ便': [
+        { label: 'S・60サイズ', cost: 750 },
+        { label: 'M・80サイズ', cost: 850 },
+        { label: 'L・100サイズ', cost: 1050 },
+        { label: '2L・120サイズ', cost: 1200 },
+      ],
+      'ゆうゆうメルカリ便': [
+        { label: '60サイズ', cost: 730 },
+        { label: '80サイズ', cost: 870 },
+        { label: '100サイズ', cost: 1070 },
+      ],
+    };
+
+    const CONDITION_DESC = {
+      '新品未使用':         '未開封・未使用の商品です。',
+      '未使用に近い':       'ほとんど使用していない商品です。',
+      '目立った傷や汚れなし': '全体的に状態良好です。目立った傷や汚れはございません。',
+      'やや傷や汚れあり':   '使用感はありますが、大きなダメージはございません。',
+      '傷や汚れあり':       '使用による傷や汚れがあります。詳細は写真にてご確認ください。',
+    };
+
+    const DISCLAIMER = `【免責事項】
+・写真の色味はモニターの設定により実物と異なる場合があります。
+・見落としがある場合もございますので、神経質な方はご遠慮ください。
+・圧縮可能な商品はコンパクトに梱包する場合があります。
+
+【環境】
+ペットなし・喫煙者なし`;
+
+    // ===== ユーティリティ =====
+    function genId() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2);
+    }
+
+    function useLocalStorage(key, initial) {
+      const [value, setValue] = useState(() => {
+        try {
+          const s = localStorage.getItem(key);
+          return s ? JSON.parse(s) : initial;
+        } catch { return initial; }
+      });
+      useEffect(() => {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+      }, [key, value]);
+      return [value, setValue];
+    }
+
+    // ===== 出品文生成 =====
+    function generateText(data) {
+      const L = [];
+      const push = (...args) => L.push(...args);
+      const nl = () => push('');
+
+      // ① 商品名
+      push(data.productName || '（商品名未入力）');
+      nl();
+
+      // ② 内容
+      push('【商品説明】');
+      let desc = '';
+      if (data.brand) desc += `${data.brand}の`;
+      if (data.productName) desc += data.productName;
+      desc += 'を出品いたします。';
+
+      const accList = [];
+      if (data.accessories?.box)     accList.push('箱');
+      if (data.accessories?.manual)  accList.push('説明書');
+      if (data.accessories?.warranty) accList.push('保証書');
+      if (data.accessories?.other) {
+        accList.push(data.accessories.otherText || 'その他付属品');
+      }
+      if (accList.length > 0) {
+        desc += `\n付属品として${accList.join('・')}が含まれています。`;
+      } else {
+        desc += '\n付属品はありません。';
+      }
+      if (data.notes) desc += `\n${data.notes}`;
+      push(desc);
+      nl();
+
+      // ③ 仕様
+      const specs = [];
+      if (data.brand)       specs.push(`ブランド/メーカー：${data.brand}`);
+      if (data.modelNumber) specs.push(`型番：${data.modelNumber}`);
+      if (data.color)       specs.push(`カラー：${data.color}`);
+      if (data.size)        specs.push(`サイズ：${data.size}`);
+      if (data.category === '本') {
+        specs.push(`書き込み：${data.hasWriting ? 'あり' : 'なし'}`);
+      }
+      if (specs.length > 0) {
+        push('【仕様】');
+        specs.forEach(s => push(`・${s}`));
+        nl();
+      }
+
+      // ④ 状態
+      push('【状態】');
+      if (data.condition) {
+        push(data.condition);
+        if (CONDITION_DESC[data.condition]) push(CONDITION_DESC[data.condition]);
+      }
+      nl();
+
+      // ⑤ 発送
+      push('【発送】');
+      if (data.shippingMethod) push(`・発送方法：${data.shippingMethod}`);
+      if (data.shippingOrigin) push(`・発送元：${data.shippingOrigin}`);
+      if (data.shippingDays)   push(`・発送日数：${data.shippingDays}`);
+      nl();
+
+      // ⑥ 定型文
+      push(DISCLAIMER);
+
+      // ⑦ 相場
+      if (data.marketPriceMin || data.marketPriceMax) {
+        nl();
+        push('【参考相場】');
+        const min = data.marketPriceMin ? `¥${Number(data.marketPriceMin).toLocaleString()}` : '?';
+        const max = data.marketPriceMax ? `¥${Number(data.marketPriceMax).toLocaleString()}` : '?';
+        push(`参考：メルカリSOLD実績 ${min}〜${max}程度（2024年調査）`);
+      }
+
+      return L.join('\n');
+    }
+
+    // ===== デフォルト値 =====
+    const defaultListing = {
+      productName: '',
+      category: '家電',
+      brand: '',
+      modelNumber: '',
+      color: '',
+      size: '',
+      accessories: { box: false, manual: false, warranty: false, other: false, otherText: '' },
+      condition: '目立った傷や汚れなし',
+      shippingMethod: 'らくらくメルカリ便',
+      shippingOrigin: '東京都',
+      shippingDays: '2〜3日以内',
+      notes: '',
+      marketPriceMin: '',
+      marketPriceMax: '',
+      hasWriting: false,
+    };
+
+    // ===== 共通UIパーツ =====
+    function Field({ label, required, children }) {
+      return (
+        <div className="mb-3">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+          </label>
+          {children}
+        </div>
+      );
+    }
+
+    const inputCls = "w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent bg-white";
+
+    function Input(props) {
+      return <input className={inputCls} {...props} />;
+    }
+
+    function Select({ children, ...props }) {
+      return (
+        <select className={inputCls} {...props}>{children}</select>
+      );
+    }
+
+    function Textarea(props) {
+      return (
+        <textarea
+          className={`${inputCls} resize-y`}
+          rows={3}
+          {...props}
+        />
+      );
+    }
+
+    // ===== Phase 1: 出品文ジェネレーター =====
+    function ListingGenerator({ marketMemos, onSave, editData, onEditClear }) {
+      const [form, setForm] = useState(editData || defaultListing);
+      const [copied, setCopied] = useState(false);
+      const [saved, setSaved] = useState(false);
+
+      useEffect(() => {
+        if (editData) setForm(editData);
+      }, [editData]);
+
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+      const setAcc = (k, v) => setForm(f => ({ ...f, accessories: { ...f.accessories, [k]: v } }));
+
+      const text = generateText(form);
+
+      async function handleCopy() {
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const el = document.createElement('textarea');
+          el.value = text;
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand('copy');
+          document.body.removeChild(el);
+        }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+
+      function handleSave() {
+        const data = { ...form, id: form.id || genId(), savedAt: new Date().toISOString() };
+        onSave(data);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      }
+
+      function handleNew() {
+        setForm(defaultListing);
+        onEditClear();
+      }
+
+      function handleMarketSelect(e) {
+        const id = e.target.value;
+        if (!id) return;
+        const m = marketMemos.find(x => x.id === id);
+        if (m) {
+          set('marketPriceMin', String(m.minPrice));
+          set('marketPriceMax', String(m.maxPrice));
+        }
+        e.target.value = '';
+      }
+
+      return (
+        <div className="flex flex-col lg:flex-row gap-4">
+          {/* 左：入力フォーム */}
+          <div className="lg:w-1/2 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
+              <h2 className="font-bold text-gray-800">商品情報入力</h2>
+              {editData && (
+                <button onClick={handleNew} className="text-xs text-blue-500 hover:underline">新規作成</button>
+              )}
+            </div>
+
+            <Field label="商品名" required>
+              <Input
+                value={form.productName}
+                onChange={e => set('productName', e.target.value)}
+                placeholder="例：ソニー ワイヤレスイヤホン WF-1000XM5"
+              />
+            </Field>
+
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Field label="カテゴリ" required>
+                  <Select value={form.category} onChange={e => set('category', e.target.value)}>
+                    {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  </Select>
+                </Field>
+              </div>
+              <div className="flex-1">
+                <Field label="ブランド・メーカー">
+                  <Input value={form.brand} onChange={e => set('brand', e.target.value)} placeholder="例：ソニー" />
+                </Field>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Field label="型番・品番">
+                  <Input value={form.modelNumber} onChange={e => set('modelNumber', e.target.value)} placeholder="例：WF-1000XM5" />
+                </Field>
+              </div>
+              <div className="flex-1">
+                <Field label="カラー">
+                  <Input value={form.color} onChange={e => set('color', e.target.value)} placeholder="例：ブラック" />
+                </Field>
+              </div>
+            </div>
+
+            <Field label="サイズ・寸法">
+              <Input value={form.size} onChange={e => set('size', e.target.value)} placeholder="例：W32×H28×D15cm" />
+            </Field>
+
+            {/* 本カテゴリのみ書き込み欄 */}
+            {form.category === '本' && (
+              <Field label="書き込みの有無">
+                <Select value={form.hasWriting ? 'あり' : 'なし'} onChange={e => set('hasWriting', e.target.value === 'あり')}>
+                  <option value="なし">なし</option>
+                  <option value="あり">あり</option>
+                </Select>
+              </Field>
+            )}
+
+            <Field label="付属品">
+              <div className="flex flex-wrap gap-4 mt-0.5">
+                {[['box','箱'],['manual','説明書'],['warranty','保証書'],['other','その他']].map(([k, label]) => (
+                  <label key={k} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.accessories[k]}
+                      onChange={e => setAcc(k, e.target.checked)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {form.accessories.other && (
+                <Input
+                  className="mt-1.5"
+                  value={form.accessories.otherText}
+                  onChange={e => setAcc('otherText', e.target.value)}
+                  placeholder="その他付属品を具体的に入力"
+                />
+              )}
+            </Field>
+
+            <Field label="状態" required>
+              <Select value={form.condition} onChange={e => set('condition', e.target.value)}>
+                {CONDITIONS.map(c => <option key={c}>{c}</option>)}
+              </Select>
+            </Field>
+
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Field label="発送方法">
+                  <Select value={form.shippingMethod} onChange={e => set('shippingMethod', e.target.value)}>
+                    {SHIPPING_METHODS.map(m => <option key={m}>{m}</option>)}
+                  </Select>
+                </Field>
+              </div>
+              <div className="flex-1">
+                <Field label="発送元地域">
+                  <Input value={form.shippingOrigin} onChange={e => set('shippingOrigin', e.target.value)} />
+                </Field>
+              </div>
+            </div>
+
+            <Field label="発送日数">
+              <Select value={form.shippingDays} onChange={e => set('shippingDays', e.target.value)}>
+                {SHIPPING_DAYS.map(d => <option key={d}>{d}</option>)}
+              </Select>
+            </Field>
+
+            <Field label="補足メモ">
+              <Textarea
+                value={form.notes}
+                onChange={e => set('notes', e.target.value)}
+                placeholder="気になる点・状態の詳細など"
+              />
+            </Field>
+
+            <div className="border-t border-gray-100 pt-3 mt-1">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-medium text-gray-600">参考相場（⑦）</span>
+                {marketMemos.length > 0 && (
+                  <select
+                    className="text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
+                    defaultValue=""
+                    onChange={handleMarketSelect}
+                  >
+                    <option value="">相場メモから引用...</option>
+                    {marketMemos.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.productName}（¥{m.minPrice.toLocaleString()}〜¥{m.maxPrice.toLocaleString()}）
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 shrink-0">¥</span>
+                <Input
+                  type="number"
+                  value={form.marketPriceMin}
+                  onChange={e => set('marketPriceMin', e.target.value)}
+                  placeholder="下限"
+                />
+                <span className="text-xs text-gray-400 shrink-0">〜 ¥</span>
+                <Input
+                  type="number"
+                  value={form.marketPriceMax}
+                  onChange={e => set('marketPriceMax', e.target.value)}
+                  placeholder="上限"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 右：プレビュー */}
+          <div className="lg:w-1/2 bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col">
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
+              <h2 className="font-bold text-gray-800">出品文プレビュー</h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCopy}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
+                    copied
+                      ? 'bg-green-500 text-white'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  {copied ? 'コピー完了' : 'コピー'}
+                </button>
+                <button
+                  onClick={handleSave}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
+                    saved
+                      ? 'bg-green-500 text-white'
+                      : 'bg-red-500 hover:bg-red-600 text-white'
+                  }`}
+                >
+                  {saved ? '保存済み' : (editData ? '更新' : '保存')}
+                </button>
+              </div>
+            </div>
+            <div className="preview-text text-xs text-gray-700 bg-gray-50 rounded-lg p-3 flex-1 overflow-auto leading-relaxed min-h-64 font-mono">
+              {text}
+            </div>
+            <div className="text-xs text-gray-400 text-right mt-1.5">{text.length} 文字</div>
+          </div>
+        </div>
+      );
+    }
+
+    // ===== Phase 2: 利益計算ツール =====
+    function ProfitCalculator({ settings }) {
+      const [purchase, setPurchase]     = useState('');
+      const [purchaseShip, setPurchaseShip] = useState('');
+      const [sellPrice, setSellPrice]   = useState('');
+      const [method, setMethod]         = useState('らくらくメルカリ便');
+      const [sizeLabel, setSizeLabel]   = useState('');
+      const [customShip, setCustomShip] = useState('');
+
+      const hasSizes = method in SHIPPING_COSTS;
+      const sizeOptions = hasSizes ? SHIPPING_COSTS[method] : [];
+
+      const shipCost = hasSizes
+        ? (sizeOptions.find(o => o.label === sizeLabel)?.cost ?? 0)
+        : (parseFloat(customShip) || 0);
+
+      const p  = parseFloat(purchase) || 0;
+      const ps = parseFloat(purchaseShip) || 0;
+      const sp = parseFloat(sellPrice) || 0;
+      const fee = Math.round(sp * 0.1);
+      const profit = sp - p - ps - shipCost - fee;
+      const rate = sp > 0 ? (profit / sp) * 100 : 0;
+      const threshold = settings.profitThreshold ?? 15;
+      const isOK = rate >= threshold;
+      const hasData = sp > 0;
+
+      return (
+        <div className="flex flex-col lg:flex-row gap-4">
+          <div className="lg:w-1/2 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <h2 className="font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100">入力</h2>
+
+            <Field label="仕入れ価格（円）">
+              <Input type="number" value={purchase} onChange={e => setPurchase(e.target.value)} placeholder="0" min="0" />
+            </Field>
+            <Field label="仕入れ送料（円）">
+              <Input type="number" value={purchaseShip} onChange={e => setPurchaseShip(e.target.value)} placeholder="0" min="0" />
+            </Field>
+            <Field label="出品予定価格（円）" required>
+              <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} placeholder="0" min="0" />
+            </Field>
+
+            <Field label="発送方法">
+              <Select value={method} onChange={e => { setMethod(e.target.value); setSizeLabel(''); }}>
+                {SHIPPING_METHODS.map(m => <option key={m}>{m}</option>)}
+              </Select>
+            </Field>
+
+            {hasSizes ? (
+              <Field label="サイズ">
+                <Select value={sizeLabel} onChange={e => setSizeLabel(e.target.value)}>
+                  <option value="">選択してください</option>
+                  {sizeOptions.map(o => (
+                    <option key={o.label} value={o.label}>{o.label}（¥{o.cost.toLocaleString()}）</option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <Field label="送料（円）">
+                <Input type="number" value={customShip} onChange={e => setCustomShip(e.target.value)} placeholder="0" min="0" />
+              </Field>
+            )}
+          </div>
+
+          <div className="lg:w-1/2 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <h2 className="font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100">計算結果</h2>
+
+            {[
+              ['出品価格',          `¥${sp.toLocaleString()}`,       ''],
+              ['仕入れ価格',        `- ¥${p.toLocaleString()}`,       ''],
+              ['仕入れ送料',        `- ¥${ps.toLocaleString()}`,      ''],
+              ['出品送料',          `- ¥${shipCost.toLocaleString()}`, ''],
+              ['販売手数料（10%）', `- ¥${fee.toLocaleString()}`,      ''],
+            ].map(([label, val]) => (
+              <div key={label} className="flex justify-between items-center py-2 border-b border-gray-100 text-sm">
+                <span className="text-gray-600">{label}</span>
+                <span className="font-medium text-gray-800">{val}</span>
+              </div>
+            ))}
+
+            <div className="mt-3 pt-3 border-t-2 border-gray-200">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-gray-800">純利益</span>
+                <span className={`text-xl font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  ¥{profit.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center mt-1">
+                <span className="text-sm text-gray-600">利益率</span>
+                <span className={`text-sm font-semibold ${rate >= threshold ? 'text-green-600' : 'text-orange-500'}`}>
+                  {hasData ? rate.toFixed(1) : '0.0'}%
+                </span>
+              </div>
+            </div>
+
+            {hasData && (
+              <div className={`mt-4 p-3 rounded-xl text-center font-bold transition-colors ${
+                isOK
+                  ? 'bg-green-50 text-green-700 border border-green-200'
+                  : 'bg-orange-50 text-orange-700 border border-orange-200'
+              }`}>
+                <div className="text-lg">{isOK ? '仕入れOK' : '要検討'}</div>
+                <div className="text-xs font-normal opacity-60 mt-0.5">判定閾値：{threshold}%以上</div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ===== Phase 3: 出品履歴管理 =====
+    function ListingHistory({ listings, onEdit, onDuplicate, onDelete }) {
+      const [nameQ, setNameQ]   = useState('');
+      const [catQ, setCatQ]     = useState('');
+      const [deleteTarget, setDeleteTarget] = useState(null);
+
+      const filtered = listings
+        .filter(l => {
+          const ok1 = !nameQ || l.productName.toLowerCase().includes(nameQ.toLowerCase());
+          const ok2 = !catQ  || l.category === catQ;
+          return ok1 && ok2;
+        })
+        .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+
+      function fmtDate(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+      }
+
+      const condCls = {
+        '新品未使用':           'bg-blue-100 text-blue-700',
+        '未使用に近い':         'bg-green-100 text-green-700',
+        '目立った傷や汚れなし': 'bg-teal-100 text-teal-700',
+        'やや傷や汚れあり':     'bg-yellow-100 text-yellow-700',
+        '傷や汚れあり':         'bg-red-100 text-red-600',
+      };
+
+      return (
+        <div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-3 mb-4 flex flex-wrap gap-2">
+            <input
+              className={`${inputCls} flex-1 min-w-36`}
+              placeholder="商品名で検索..."
+              value={nameQ}
+              onChange={e => setNameQ(e.target.value)}
+            />
+            <select
+              className={`${inputCls} w-auto`}
+              value={catQ}
+              onChange={e => setCatQ(e.target.value)}
+            >
+              <option value="">すべてのカテゴリ</option>
+              {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            </select>
+            <span className="self-center text-xs text-gray-400">{filtered.length}件</span>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-10 text-center text-gray-400">
+              {listings.length === 0 ? '保存した出品データがありません' : '検索条件に一致するデータがありません'}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {filtered.map(item => (
+                <div key={item.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <h3 className="font-medium text-sm text-gray-800 leading-snug line-clamp-2">{item.productName || '（名称なし）'}</h3>
+                    <span className="text-xs text-gray-400 whitespace-nowrap shrink-0">{fmtDate(item.savedAt)}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{item.category}</span>
+                    {item.condition && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${condCls[item.condition] || 'bg-gray-100 text-gray-600'}`}>
+                        {item.condition}
+                      </span>
+                    )}
+                  </div>
+                  {item.brand && <div className="text-xs text-gray-400 mb-3 truncate">{item.brand}</div>}
+                  <div className="flex gap-1.5">
+                    <button onClick={() => onEdit(item)}     className="flex-1 py-1.5 text-xs rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors">編集</button>
+                    <button onClick={() => onDuplicate(item)} className="flex-1 py-1.5 text-xs rounded-lg border border-green-200 text-green-600 hover:bg-green-50 transition-colors">複製</button>
+                    <button onClick={() => setDeleteTarget(item)} className="flex-1 py-1.5 text-xs rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors">削除</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {deleteTarget && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-2xl p-5 max-w-xs w-full">
+                <h3 className="font-bold text-gray-800 mb-1">削除の確認</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  「{deleteTarget.productName || '（名称なし）'}」を削除しますか？<br />
+                  この操作は取り消せません。
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">キャンセル</button>
+                  <button onClick={() => { onDelete(deleteTarget.id); setDeleteTarget(null); }} className="flex-1 py-2 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600">削除する</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ===== Phase 4: 相場メモ =====
+    function MarketMemo({ memos, onSave, onDelete }) {
+      const [form, setForm] = useState({ productName: '', minPrice: '', maxPrice: '', referenceDate: '', source: '' });
+      const [deleteTarget, setDeleteTarget] = useState(null);
+      const sf = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      function handleSubmit(e) {
+        e.preventDefault();
+        if (!form.productName) return;
+        onSave({
+          id: genId(),
+          productName: form.productName,
+          minPrice: parseInt(form.minPrice) || 0,
+          maxPrice: parseInt(form.maxPrice) || 0,
+          referenceDate: form.referenceDate,
+          source: form.source,
+        });
+        setForm({ productName: '', minPrice: '', maxPrice: '', referenceDate: '', source: '' });
+      }
+
+      return (
+        <div className="flex flex-col lg:flex-row gap-4">
+          <div className="lg:w-2/5 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <h2 className="font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100">相場を登録</h2>
+            <form onSubmit={handleSubmit}>
+              <Field label="商品名" required>
+                <Input value={form.productName} onChange={e => sf('productName', e.target.value)} placeholder="商品名" />
+              </Field>
+              <div className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <Field label="下限（円）">
+                    <Input type="number" value={form.minPrice} onChange={e => sf('minPrice', e.target.value)} placeholder="0" />
+                  </Field>
+                </div>
+                <span className="mb-3 text-gray-400 text-sm">〜</span>
+                <div className="flex-1">
+                  <Field label="上限（円）">
+                    <Input type="number" value={form.maxPrice} onChange={e => sf('maxPrice', e.target.value)} placeholder="0" />
+                  </Field>
+                </div>
+              </div>
+              <Field label="参照日">
+                <Input type="date" value={form.referenceDate} onChange={e => sf('referenceDate', e.target.value)} />
+              </Field>
+              <Field label="出典">
+                <Input value={form.source} onChange={e => sf('source', e.target.value)} placeholder="例：メルカリSOLD一覧" />
+              </Field>
+              <button type="submit" className="w-full py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors mt-1">
+                登録する
+              </button>
+            </form>
+          </div>
+
+          <div className="lg:w-3/5 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <h2 className="font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100">
+              登録済み相場
+              <span className="ml-2 text-sm font-normal text-gray-400">{memos.length}件</span>
+            </h2>
+            {memos.length === 0 ? (
+              <div className="text-center text-gray-400 py-10 text-sm">登録された相場データがありません</div>
+            ) : (
+              <div className="space-y-2">
+                {memos.map(m => (
+                  <div key={m.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm text-gray-800 truncate">{m.productName}</div>
+                      <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-x-2">
+                        <span>¥{m.minPrice.toLocaleString()} 〜 ¥{m.maxPrice.toLocaleString()}</span>
+                        {m.referenceDate && <span>{m.referenceDate}</span>}
+                        {m.source && <span className="text-gray-400">{m.source}</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setDeleteTarget(m)}
+                      className="text-xs text-red-400 hover:text-red-600 shrink-0 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                    >
+                      削除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {deleteTarget && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-2xl p-5 max-w-xs w-full">
+                <h3 className="font-bold text-gray-800 mb-1">削除の確認</h3>
+                <p className="text-sm text-gray-600 mb-4">「{deleteTarget.productName}」の相場データを削除しますか？</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">キャンセル</button>
+                  <button onClick={() => { onDelete(deleteTarget.id); setDeleteTarget(null); }} className="flex-1 py-2 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600">削除する</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ===== 設定モーダル =====
+    function SettingsModal({ settings, onSave, onClose }) {
+      const [threshold, setThreshold] = useState(String(settings.profitThreshold ?? 15));
+      return (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-5 max-w-xs w-full">
+            <h3 className="font-bold text-gray-800 mb-4">設定</h3>
+            <Field label="仕入れOK判定の利益率閾値（%）">
+              <Input
+                type="number"
+                value={threshold}
+                onChange={e => setThreshold(e.target.value)}
+                min="0" max="100"
+              />
+            </Field>
+            <p className="text-xs text-gray-400 -mt-2 mb-4">この利益率以上で「仕入れOK」と判定します</p>
+            <div className="flex gap-2">
+              <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">キャンセル</button>
+              <button
+                onClick={() => { onSave({ profitThreshold: parseInt(threshold) || 15 }); onClose(); }}
+                className="flex-1 py-2 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ===== メインApp =====
+    function App() {
+      const [tab, setTab]           = useState('generator');
+      const [listings, setListings]           = useLocalStorage('fm_listings', []);
+      const [marketMemos, setMarketMemos]     = useLocalStorage('fm_market_memos', []);
+      const [settings, setSettings]           = useLocalStorage('fm_settings', { profitThreshold: 15 });
+      const [editData, setEditData]           = useState(null);
+      const [showSettings, setShowSettings]   = useState(false);
+      const [toast, setToast]                 = useState('');
+
+      function showToast(msg) {
+        setToast(msg);
+        setTimeout(() => setToast(''), 2500);
+      }
+
+      function handleSaveListing(data) {
+        setListings(prev => {
+          const idx = prev.findIndex(l => l.id === data.id);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = data;
+            return updated;
+          }
+          return [data, ...prev];
+        });
+        showToast(editData ? '更新しました' : '保存しました');
+      }
+
+      function handleEdit(item) {
+        setEditData(item);
+        setTab('generator');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      function handleDuplicate(item) {
+        const dup = { ...item, id: genId(), savedAt: new Date().toISOString(), productName: item.productName + '（コピー）' };
+        setListings(prev => [dup, ...prev]);
+        showToast('複製しました');
+      }
+
+      function handleDeleteListing(id) {
+        setListings(prev => prev.filter(l => l.id !== id));
+        showToast('削除しました');
+      }
+
+      function handleSaveMarketMemo(memo) {
+        setMarketMemos(prev => [memo, ...prev]);
+        showToast('相場を登録しました');
+      }
+
+      function handleDeleteMarketMemo(id) {
+        setMarketMemos(prev => prev.filter(m => m.id !== id));
+        showToast('削除しました');
+      }
+
+      const tabs = [
+        { id: 'generator', label: '出品文作成' },
+        { id: 'profit',    label: '利益計算' },
+        { id: 'history',   label: `出品履歴（${listings.length}）` },
+        { id: 'market',    label: `相場メモ（${marketMemos.length}）` },
+      ];
+
+      return (
+        <div className="min-h-screen bg-gray-50">
+          {/* ヘッダー */}
+          <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-40">
+            <div className="max-w-7xl mx-auto px-3 sm:px-4">
+              <div className="flex items-center justify-between h-12">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 bg-red-500 rounded-lg flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                    </svg>
+                  </div>
+                  <span className="font-bold text-gray-800 text-sm sm:text-base">フリマ出品アシスタント</span>
+                </div>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  title="設定"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex overflow-x-auto">
+                {tabs.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                      tab === t.id
+                        ? 'border-red-500 text-red-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </header>
+
+          {/* トースト通知 */}
+          <div className={`fixed top-16 right-4 z-50 transition-all duration-300 ${toast ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
+            <div className="bg-gray-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg">
+              {toast}
+            </div>
+          </div>
+
+          {/* コンテンツ */}
+          <main className="max-w-7xl mx-auto px-3 sm:px-4 py-4">
+            {tab === 'generator' && (
+              <ListingGenerator
+                marketMemos={marketMemos}
+                onSave={handleSaveListing}
+                editData={editData}
+                onEditClear={() => setEditData(null)}
+              />
+            )}
+            {tab === 'profit' && (
+              <ProfitCalculator settings={settings} />
+            )}
+            {tab === 'history' && (
+              <ListingHistory
+                listings={listings}
+                onEdit={handleEdit}
+                onDuplicate={handleDuplicate}
+                onDelete={handleDeleteListing}
+              />
+            )}
+            {tab === 'market' && (
+              <MarketMemo
+                memos={marketMemos}
+                onSave={handleSaveMarketMemo}
+                onDelete={handleDeleteMarketMemo}
+              />
+            )}
+          </main>
+
+          {showSettings && (
+            <SettingsModal
+              settings={settings}
+              onSave={setSettings}
+              onClose={() => setShowSettings(false)}
+            />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+
+  <!-- Service Worker 登録 -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then(reg => console.log('SW registered:', reg.scope))
+          .catch(err => console.warn('SW registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
