@@ -221,7 +221,7 @@
       );
     }
 
-    // ===== 画像解析（OpenAI Vision） =====
+    // ===== 画像解析（マルチAPI対応） =====
     function toBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -231,47 +231,80 @@
       });
     }
 
-    async function analyzeProductImage(base64, apiKey) {
-      const systemPrompt = `フリマアプリ（メルカリ）用の商品情報をJSON形式のみで返してください。JSON以外の文字は一切出力しないでください。
+    const VISION_PROMPT = `フリマアプリ（メルカリ）用の商品情報をJSON形式のみで返してください。JSON以外の文字は一切出力しないでください。
 カテゴリは「家電」「衣類」「ホビー」「家具」「本」「その他」のいずれかにしてください。
 状態は「新品未使用」「未使用に近い」「目立った傷や汚れなし」「やや傷や汚れあり」「傷や汚れあり」のいずれかにしてください。
-不明な項目は空文字にしてください。`;
-
-      const userPrompt = `この商品画像から情報を抽出してください:
+不明な項目は空文字にしてください。
+この商品画像から情報を抽出してください:
 {"productName":"","category":"","brand":"","modelNumber":"","color":"","size":"","condition":"","notes":""}`;
 
+    // Google Gemini（無料枠あり: 15rpm / 1500 req/day）
+    async function analyzeWithGemini(base64, apiKey) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [
+              { text: VISION_PROMPT },
+              { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+            ]}],
+            generationConfig: { maxOutputTokens: 400 },
+          }),
+        }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Gemini HTTPエラー ${res.status}`);
+      }
+      const data = await res.json();
+      const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      const match = content.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('JSONの解析に失敗しました');
+      return JSON.parse(match[0]);
+    }
+
+    // OpenAI GPT-4o（有料）
+    async function analyzeWithOpenAI(base64, apiKey) {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify({
           model: 'gpt-4o',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            {
-              role: 'user',
-              content: [
-                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}`, detail: 'low' } },
-                { type: 'text', text: userPrompt },
-              ],
-            },
-          ],
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}`, detail: 'low' } },
+              { type: 'text', text: VISION_PROMPT },
+            ],
+          }],
           max_tokens: 400,
         }),
       });
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `HTTPエラー ${res.status}`);
+        throw new Error(err.error?.message || `OpenAI HTTPエラー ${res.status}`);
       }
-
       const data = await res.json();
       const content = data.choices[0].message.content;
       const match = content.match(/\{[\s\S]*\}/);
       if (!match) throw new Error('JSONの解析に失敗しました');
       return JSON.parse(match[0]);
+    }
+
+    // 無料プラン優先で登録済みAPIを順番に試す
+    async function analyzeProductImageAuto(base64, settings) {
+      const apis = [];
+      if (settings?.geminiApiKey) apis.push({ name: 'Gemini', fn: () => analyzeWithGemini(base64, settings.geminiApiKey) });
+      if (settings?.openaiApiKey) apis.push({ name: 'OpenAI', fn: () => analyzeWithOpenAI(base64, settings.openaiApiKey) });
+      if (apis.length === 0) throw new Error('APIキーが未登録です。設定画面でGemini（無料）またはOpenAIのキーを登録してください');
+      let lastError = '';
+      for (const api of apis) {
+        try { return await api.fn(); }
+        catch (err) { lastError = `${api.name}: ${err.message}`; }
+      }
+      throw new Error(lastError);
     }
 
     // ===== Phase 1: 出品文ジェネレーター =====
@@ -286,17 +319,11 @@
       async function handleImageChange(e) {
         const file = e.target.files[0];
         if (!file) return;
-        const apiKey = settings?.openaiApiKey;
-        if (!apiKey) {
-          setAnalyzeError('設定画面でOpenAI APIキーを登録してください');
-          e.target.value = '';
-          return;
-        }
         setAnalyzing(true);
         setAnalyzeError('');
         try {
           const base64 = await toBase64(file);
-          const result = await analyzeProductImage(base64, apiKey);
+          const result = await analyzeProductImageAuto(base64, settings);
           // 空文字でない項目のみ上書き
           setForm(f => {
             const merged = { ...f };
@@ -401,7 +428,7 @@
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
-                  capture="environment"
+
                   className="hidden"
                   onChange={handleImageChange}
                 />
@@ -902,53 +929,59 @@
     }
 
     // ===== 設定モーダル =====
+    function ApiKeyField({ label, badge, placeholder, value, onChange }) {
+      const [show, setShow] = useState(false);
+      return (
+        <>
+          <Field label={<span>{label} <span className={`text-xs font-normal px-1.5 py-0.5 rounded-full ${badge === '無料' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{badge}</span></span>}>
+            <div className="flex gap-1">
+              <input
+                className={inputCls + ' flex-1'}
+                type={show ? 'text' : 'password'}
+                value={value}
+                onChange={e => onChange(e.target.value)}
+                placeholder={placeholder}
+                autoComplete="off"
+              />
+              <button type="button" onClick={() => setShow(v => !v)} className="px-2 py-1 text-gray-400 hover:text-gray-600 border border-gray-300 rounded-md">
+                {show ? '隠す' : '表示'}
+              </button>
+            </div>
+          </Field>
+        </>
+      );
+    }
+
     function SettingsModal({ settings, onSave, onClose }) {
       const [threshold, setThreshold] = useState(String(settings.profitThreshold ?? 15));
-      const [apiKey, setApiKey] = useState(settings.openaiApiKey ?? '');
-      const [showKey, setShowKey] = useState(false);
+      const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey ?? '');
+      const [openaiKey, setOpenaiKey] = useState(settings.openaiApiKey ?? '');
       return (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full">
             <h3 className="font-bold text-gray-800 mb-4">設定</h3>
 
             <Field label="仕入れOK判定の利益率閾値（%）">
-              <Input
-                type="number"
-                value={threshold}
-                onChange={e => setThreshold(e.target.value)}
-                min="0" max="100"
-              />
+              <Input type="number" value={threshold} onChange={e => setThreshold(e.target.value)} min="0" max="100" />
             </Field>
             <p className="text-xs text-gray-400 -mt-2 mb-4">この利益率以上で「仕入れOK」と判定します</p>
 
-            <Field label="OpenAI APIキー（写真自動入力用）">
-              <div className="flex gap-1">
-                <input
-                  className={inputCls + ' flex-1'}
-                  type={showKey ? 'text' : 'password'}
-                  value={apiKey}
-                  onChange={e => setApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  autoComplete="off"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowKey(v => !v)}
-                  className="px-2 py-1 text-gray-400 hover:text-gray-600 border border-gray-300 rounded-md"
-                >
-                  {showKey ? '隠す' : '表示'}
-                </button>
-              </div>
-            </Field>
-            <p className="text-xs text-gray-400 -mt-2 mb-4">
-              このデバイスのlocalStorageにのみ保存されます。
-              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline ml-1">APIキーを取得</a>
+            <p className="text-xs font-medium text-gray-600 mb-2">写真自動入力 APIキー（登録済みのうち無料優先で自動選択）</p>
+            <ApiKeyField label="Google Gemini" badge="無料" placeholder="AIzaSy..." value={geminiKey} onChange={setGeminiKey} />
+            <p className="text-xs text-gray-400 -mt-2 mb-3">
+              無料枠: 15回/分・1500回/日
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline ml-1">キーを取得</a>
             </p>
+            <ApiKeyField label="OpenAI GPT-4o" badge="有料" placeholder="sk-..." value={openaiKey} onChange={setOpenaiKey} />
+            <p className="text-xs text-gray-400 -mt-2 mb-4">
+              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">キーを取得</a>
+            </p>
+            <p className="text-xs text-gray-400 mb-4">キーはこのデバイスのlocalStorageにのみ保存されます。</p>
 
             <div className="flex gap-2">
               <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">キャンセル</button>
               <button
-                onClick={() => { onSave({ profitThreshold: parseInt(threshold) || 15, openaiApiKey: apiKey.trim() }); onClose(); }}
+                onClick={() => { onSave({ profitThreshold: parseInt(threshold) || 15, geminiApiKey: geminiKey.trim(), openaiApiKey: openaiKey.trim() }); onClose(); }}
                 className="flex-1 py-2 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600"
               >
                 保存
