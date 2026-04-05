@@ -289,7 +289,7 @@
           throw err; // quota以外のエラー（認証など）はすぐ投げる
         }
       }
-      throw new Error(`Gemini全モデル失敗: ${lastErr}`);
+      throw new Error('Gemini無料枠が利用不可です（日本では制限される場合があります）。設定画面でOpenAI APIキーを登録するか、Geminiに課金設定してください');
     }
 
     // OpenAI GPT-4o（有料）
