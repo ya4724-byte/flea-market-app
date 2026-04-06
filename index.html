@@ -222,8 +222,8 @@
       });
     }
 
-    const AI_LISTING_PROMPT = `画像に写っている商品を詳しく説明してください。
-画像から読み取れる情報をもとに、自然な日本語で記述してください。
+    const AI_LISTING_PROMPT = `これはフリマアプリ（メルカリ等）の出品作業を補助するツールです。
+添付画像に写っている販売商品の情報を読み取り、出品文を作成してください。
 説明・コメントは不要です。以下のフォーマット厳守で出力してください。
 
 ===LISTING===
@@ -257,10 +257,16 @@
 {"productName":"","brand":"","category":"家電/衣類/ホビー/家具/本/その他のいずれか","color":"","size":"","condition":"新品未使用/未使用に近い/目立った傷や汚れなし/やや傷や汚れあり/傷や汚れありのいずれか"}
 ===END===`;
 
+    // 補足テキストをプロンプトに追記
+    function buildPrompt(supplementText) {
+      if (!supplementText?.trim()) return AI_LISTING_PROMPT;
+      return AI_LISTING_PROMPT + `\n\n補足情報（ユーザー提供）:\n${supplementText.trim()}\n上記の補足情報も参考にして出品文を生成してください。`;
+    }
+
     // Google Gemini 単一モデルで呼び出し
-    async function callGeminiModel(model, images, apiKey) {
+    async function callGeminiModel(model, images, apiKey, supplementText = '') {
       const apiVer = model.startsWith('gemini-1.5') ? 'v1' : 'v1beta';
-      const parts = [{ text: AI_LISTING_PROMPT }];
+      const parts = [{ text: buildPrompt(supplementText) }];
       for (const b64 of images) {
         parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
       }
@@ -293,11 +299,11 @@
       'gemini-2.0-flash',        // 無料: 地域によって制限あり
     ];
 
-    async function generateWithGemini(images, apiKey) {
+    async function generateWithGemini(images, apiKey, supplementText = '') {
       let lastErr = '';
       for (const model of GEMINI_MODELS) {
         try {
-          return await callGeminiModel(model, images, apiKey);
+          return await callGeminiModel(model, images, apiKey, supplementText);
         } catch (err) {
           lastErr = err.message;
           if (
@@ -311,9 +317,9 @@
     }
 
     // OpenAI GPT-4o（有料）
-    async function generateWithOpenAI(images, apiKey) {
+    async function generateWithOpenAI(images, apiKey, supplementText = '') {
       const content = [
-        { type: 'text', text: AI_LISTING_PROMPT },
+        { type: 'text', text: buildPrompt(supplementText) },
         ...images.map(b64 => ({
           type: 'image_url',
           image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'low' },
@@ -337,10 +343,10 @@
     }
 
     // 無料優先で登録済みAPIを順番に試す
-    async function generateListingFromImages(images, settings) {
+    async function generateListingFromImages(images, settings, supplementText = '') {
       const apis = [];
-      if (settings?.geminiApiKey) apis.push({ name: 'Gemini', fn: () => generateWithGemini(images, settings.geminiApiKey) });
-      if (settings?.openaiApiKey) apis.push({ name: 'OpenAI', fn: () => generateWithOpenAI(images, settings.openaiApiKey) });
+      if (settings?.geminiApiKey) apis.push({ name: 'Gemini', fn: () => generateWithGemini(images, settings.geminiApiKey, supplementText) });
+      if (settings?.openaiApiKey) apis.push({ name: 'OpenAI', fn: () => generateWithOpenAI(images, settings.openaiApiKey, supplementText) });
       if (apis.length === 0) throw new Error('APIキーが未登録です。設定画面でGemini（無料）またはOpenAIのキーを登録してください');
       let lastError = '';
       for (const api of apis) {
@@ -354,7 +360,9 @@
     function parseAIResponse(raw) {
       const listingMatch = raw.match(/===LISTING===\s*([\s\S]*?)\s*===INFO===/);
       const infoMatch    = raw.match(/===INFO===\s*(\{[\s\S]*?\})\s*===END===/);
-      const listingText  = listingMatch ? listingMatch[1].trim() : raw.trim();
+      // フォーマット不一致＝AIが拒否または予期しない返答
+      if (!listingMatch) throw new Error(`AIが正しい形式で返答しませんでした。補足情報を追加するか、別の画像を試してください。\n\n（AIの返答: ${raw.slice(0, 100)}…）`);
+      const listingText = listingMatch[1].trim();
       let info = {};
       if (infoMatch) {
         try { info = JSON.parse(infoMatch[1]); } catch {}
@@ -428,19 +436,40 @@ JSONのみ出力してください（説明不要）。
     // ===== Google Sheets 連携 =====
     async function postToSheet(gasUrl, data) {
       if (!gasUrl) return;
-      // GASはGETクエリパラメータ方式が最も確実
+      // 付属品オブジェクトを文字列化
+      const acc = data.accessories || {};
+      const accParts = [];
+      if (acc.box)     accParts.push('箱');
+      if (acc.manual)  accParts.push('説明書');
+      if (acc.warranty) accParts.push('保証書');
+      if (acc.other)   accParts.push(acc.otherText || 'その他');
+      const accStr = accParts.join('・') || 'なし';
+
       const params = new URLSearchParams({
-        savedAt:        data.savedAt || '',
-        productName:    data.productName || '',
-        category:       data.category || '',
-        condition:      data.condition || '',
-        sellPrice:      data.sellPrice || 0,
-        purchase:       data.purchase || 0,
-        purchaseShip:   data.purchaseShip || 0,
-        calcShipCost:   data.calcShipCost || 0,
-        calcFee:        data.calcFee || 0,
-        calcProfit:     data.calcProfit || 0,
-        calcProfitRate: data.calcProfitRate || 0,
+        savedAt:          data.savedAt || '',
+        productName:      data.productName || '',
+        category:         data.category || '',
+        brand:            data.brand || '',
+        modelNumber:      data.modelNumber || '',
+        color:            data.color || '',
+        size:             data.size || '',
+        accessories:      accStr,
+        condition:        data.condition || '',
+        shippingMethod:   data.shippingMethod || '',
+        shippingOrigin:   data.shippingOrigin || '',
+        shippingDays:     data.shippingDays || '',
+        notes:            data.notes || '',
+        marketPriceMin:   data.marketPriceMin || '',
+        marketPriceMax:   data.marketPriceMax || '',
+        hasWriting:       data.hasWriting ? '有' : '無',
+        sellPrice:        data.sellPrice || 0,
+        purchase:         data.purchase || 0,
+        purchaseShip:     data.purchaseShip || 0,
+        calcShipCost:     data.calcShipCost || 0,
+        calcFee:          data.calcFee || 0,
+        calcProfit:       data.calcProfit || 0,
+        calcProfitRate:   data.calcProfitRate || 0,
+        listingText:      data.listingText || '',
       });
       await fetch(`${gasUrl}?${params.toString()}`);
     }
@@ -454,6 +483,7 @@ JSONのみ出力してください（説明不要）。
       const [genError, setGenError] = useState('');
       const [aiText, setAiText] = useState('');       // AI生成テキスト（設定時はプレビューに表示）
       const [selectedCount, setSelectedCount] = useState(0);
+      const [supplementText, setSupplementText] = useState(''); // 写真生成時の補足テキスト
       const fileInputRef = useRef(null);
       const [marketData, setMarketData] = useState(null);
       const [fetchingMarket, setFetchingMarket] = useState(false);
@@ -468,7 +498,7 @@ JSONのみ出力してください（説明不要）。
         setAiText('');
         try {
           const images = await Promise.all(files.map(toBase64));
-          const raw = await generateListingFromImages(images, settings);
+          const raw = await generateListingFromImages(images, settings, supplementText);
           const { listingText, info } = parseAIResponse(raw);
           setAiText(listingText);
           // フォーム項目にも反映（空でない項目のみ上書き）
@@ -584,6 +614,15 @@ JSONのみ出力してください（説明不要）。
                 {editData && (
                   <button onClick={handleNew} className="text-xs text-blue-500 hover:underline">新規作成</button>
                 )}
+                {/* 補足テキスト入力 */}
+                <input
+                  type="text"
+                  value={supplementText}
+                  onChange={e => setSupplementText(e.target.value)}
+                  placeholder="補足情報（ブランド・傷の場所など）"
+                  className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-44 focus:outline-none focus:border-red-300 focus:ring-1 focus:ring-red-100"
+                  disabled={generating}
+                />
                 {/* 写真から出品文生成ボタン */}
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -868,8 +907,8 @@ JSONのみ出力してください（説明不要）。
                           color: 'text-green-600',
                         },
                         {
-                          label: 'PayPayフリマ',
-                          url: `https://paypayflea.com/search?q=${encodeURIComponent(form.productName)}&status=closed`,
+                          label: 'Yahoo!フリマ',
+                          url: `https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(form.productName)}`,
                           color: 'text-yellow-600',
                         },
                       ].map(({ label, url, color }) => (
@@ -1157,10 +1196,38 @@ JSONのみ出力してください（説明不要）。
     }
 
     // ===== Phase 3: 出品履歴管理 =====
-    function ListingHistory({ listings, onEdit, onDuplicate, onDelete }) {
+    function ListingHistory({ listings, onEdit, onDuplicate, onDelete, settings, onToast }) {
       const [nameQ, setNameQ]   = useState('');
       const [catQ, setCatQ]     = useState('');
       const [deleteTarget, setDeleteTarget] = useState(null);
+      const [exporting, setExporting] = useState(false);
+      const [exportProgress, setExportProgress] = useState(null);
+
+      // 全履歴をシートに一括出力
+      async function handleExportAll() {
+        const gasUrl = settings?.gasUrl;
+        if (!gasUrl) { onToast('GAS URLが設定されていません'); return; }
+        if (listings.length === 0) { onToast('出品履歴がありません'); return; }
+        setExporting(true);
+        let ok = 0, fail = 0;
+        for (let i = 0; i < listings.length; i++) {
+          setExportProgress(`${i + 1} / ${listings.length}`);
+          try {
+            await postToSheet(gasUrl, listings[i]);
+            ok++;
+          } catch {
+            fail++;
+          }
+          // レート制限対策: 100ms間隔
+          await new Promise(r => setTimeout(r, 100));
+        }
+        setExporting(false);
+        setExportProgress(null);
+        onToast(fail === 0
+          ? `${ok}件をシートに出力しました`
+          : `完了（成功:${ok} 失敗:${fail}）`
+        );
+      }
 
       const filtered = listings
         .filter(l => {
@@ -1202,6 +1269,30 @@ JSONのみ出力してください（説明不要）。
               {CATEGORIES.map(c => <option key={c}>{c}</option>)}
             </select>
             <span className="self-center text-xs text-gray-400">{filtered.length}件</span>
+            {settings?.gasUrl && (
+              <button
+                onClick={handleExportAll}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500 text-white text-xs font-medium hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
+              >
+                {exporting ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    {exportProgress}
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    全履歴をシートへ
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           {filtered.length === 0 ? (
@@ -1439,21 +1530,34 @@ JSONのみ出力してください（説明不要）。
                 <div className="mt-2 space-y-1 bg-gray-50 rounded p-2 font-mono text-[11px] leading-relaxed">
                   <p>1. script.google.com で新規プロジェクト作成</p>
                   <p>2. 以下をコード.gsに貼り付け:</p>
-                  <pre className="whitespace-pre-wrap break-all bg-white border border-gray-200 rounded p-1.5 mt-1">{`function doPost(e) {
+                  <pre className="whitespace-pre-wrap break-all bg-white border border-gray-200 rounded p-1.5 mt-1">{`function doGet(e) {
   const sheet = SpreadsheetApp
     .getActiveSpreadsheet()
     .getActiveSheet();
-  const d = JSON.parse(e.postData.contents);
-  const headers = ['保存日時','商品名','カテゴリ',
-    '状態','出品価格','仕入れ価格','仕入れ送料',
-    '出品送料','手数料','純利益','利益率(%)'];
+  const p = e.parameter;
+  const headers = [
+    '保存日時','商品名','カテゴリ','ブランド',
+    '型番','カラー','サイズ','付属品','状態',
+    '発送方法','発送元','発送日数','備考',
+    '相場(下限)','相場(上限)','書き込み',
+    '出品価格','仕入れ価格','仕入れ送料',
+    '出品送料','手数料','純利益','利益率(%)',
+    '出品文'
+  ];
   if (sheet.getLastRow() === 0)
     sheet.appendRow(headers);
   sheet.appendRow([
-    d.savedAt, d.productName, d.category,
-    d.condition, d.sellPrice, d.purchase,
-    d.purchaseShip, d.calcShipCost, d.calcFee,
-    d.calcProfit, d.calcProfitRate
+    p.savedAt, p.productName, p.category,
+    p.brand, p.modelNumber, p.color, p.size,
+    p.accessories, p.condition,
+    p.shippingMethod, p.shippingOrigin,
+    p.shippingDays, p.notes,
+    p.marketPriceMin, p.marketPriceMax,
+    p.hasWriting,
+    p.sellPrice, p.purchase, p.purchaseShip,
+    p.calcShipCost, p.calcFee,
+    p.calcProfit, p.calcProfitRate,
+    p.listingText
   ]);
   return ContentService
     .createTextOutput('ok');
@@ -1617,6 +1721,8 @@ JSONのみ出力してください（説明不要）。
                 onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDeleteListing}
+                settings={settings}
+                onToast={showToast}
               />
             )}
             {tab === 'market' && (
