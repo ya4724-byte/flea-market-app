@@ -34,7 +34,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef } = React;
+    const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
     // ===== 定数 =====
     const CATEGORIES = ['家電', '衣類', 'ホビー', '家具', '本', 'その他'];
@@ -64,13 +64,12 @@
       '傷や汚れあり':       '使用による傷や汚れがあります。詳細は写真にてご確認ください。',
     };
 
-    const DISCLAIMER = `【免責事項】
-・写真の色味はモニターの設定により実物と異なる場合があります。
-・見落としがある場合もございますので、神経質な方はご遠慮ください。
-・圧縮可能な商品はコンパクトに梱包する場合があります。
-
-【環境】
-ペットなし・喫煙者なし`;
+    const DISCLAIMER = `即購入OKです。
+値下げ交渉・バラ売りは対応しておりません。
+ペット・喫煙者なしの環境です。
+商品状態はできる限り正確に記載しておりますが、見落としがある場合があります。
+気になる点は購入前にご確認ください。
+梱包は丁寧に行いますが、リサイクル資材を使用する場合があります。`;
 
     // ===== ユーティリティ =====
     function genId() {
@@ -97,72 +96,57 @@
       const nl = () => push('');
 
       // ① 商品名
+      push('【商品名】');
       push(data.productName || '（商品名未入力）');
       nl();
 
-      // ② 内容
-      push('【商品説明】');
+      // ② 内容・特徴
+      push('【内容・特徴】');
       let desc = '';
       if (data.brand) desc += `${data.brand}の`;
-      if (data.productName) desc += data.productName;
-      desc += 'を出品いたします。';
-
-      const accList = [];
-      if (data.accessories?.box)     accList.push('箱');
-      if (data.accessories?.manual)  accList.push('説明書');
-      if (data.accessories?.warranty) accList.push('保証書');
-      if (data.accessories?.other) {
-        accList.push(data.accessories.otherText || 'その他付属品');
-      }
-      if (accList.length > 0) {
-        desc += `\n付属品として${accList.join('・')}が含まれています。`;
-      } else {
-        desc += '\n付属品はありません。';
-      }
+      desc += (data.productName || '商品') + 'です。';
       if (data.notes) desc += `\n${data.notes}`;
       push(desc);
       nl();
 
-      // ③ 仕様
-      const specs = [];
-      if (data.brand)       specs.push(`ブランド/メーカー：${data.brand}`);
-      if (data.modelNumber) specs.push(`型番：${data.modelNumber}`);
-      if (data.color)       specs.push(`カラー：${data.color}`);
-      if (data.size)        specs.push(`サイズ：${data.size}`);
-      if (data.category === '本') {
-        specs.push(`書き込み：${data.hasWriting ? 'あり' : 'なし'}`);
-      }
-      if (specs.length > 0) {
-        push('【仕様】');
-        specs.forEach(s => push(`・${s}`));
-        nl();
-      }
+      // ③ サイズ/型番/仕様
+      push('【サイズ/型番/仕様】');
+      if (data.brand)       push(`・メーカー：${data.brand}`);
+      if (data.modelNumber) push(`・型番：${data.modelNumber}`);
+      if (data.color)       push(`・カラー：${data.color}`);
+      if (data.size)        push(`・サイズ：${data.size}`);
+      if (data.category === '本') push(`・書き込み：${data.hasWriting ? 'あり' : 'なし'}`);
+      nl();
 
-      // ④ 状態
-      push('【状態】');
-      if (data.condition) {
-        push(data.condition);
-        if (CONDITION_DESC[data.condition]) push(CONDITION_DESC[data.condition]);
+      // ④ 状態・欠品・注意点
+      push('【状態・欠品・注意点】');
+      if (data.condition && CONDITION_DESC[data.condition]) push(CONDITION_DESC[data.condition]);
+      push('中古品のため使用感あり、状態は写真にてご確認ください。');
+      nl();
+
+      // ⑤ 発送・付属品
+      push('【発送・付属品】');
+      const accList = [];
+      if (data.accessories?.box)      accList.push('箱');
+      if (data.accessories?.manual)   accList.push('説明書');
+      if (data.accessories?.warranty) accList.push('保証書');
+      if (data.accessories?.other)    accList.push(data.accessories.otherText || 'その他付属品');
+      push(accList.length > 0 ? `・付属品：${accList.join('・')}` : '・本体のみの出品です。');
+      if (data.shippingMethod && data.shippingMethod !== '未定') {
+        push(`・${data.shippingMethod}にて発送いたします。`);
       }
       nl();
 
-      // ⑤ 発送
-      push('【発送】');
-      if (data.shippingMethod) push(`・発送方法：${data.shippingMethod}`);
-      if (data.shippingOrigin) push(`・発送元：${data.shippingOrigin}`);
-      if (data.shippingDays)   push(`・発送日数：${data.shippingDays}`);
-      nl();
-
-      // ⑥ 定型文
+      // ⑥ 固定フッター
       push(DISCLAIMER);
 
-      // ⑦ 相場
+      // ⑦ 相場（オプション）
       if (data.marketPriceMin || data.marketPriceMax) {
         nl();
         push('【参考相場】');
         const min = data.marketPriceMin ? `¥${Number(data.marketPriceMin).toLocaleString()}` : '?';
         const max = data.marketPriceMax ? `¥${Number(data.marketPriceMax).toLocaleString()}` : '?';
-        push(`参考：メルカリSOLD実績 ${min}〜${max}程度（2024年調査）`);
+        push(`メルカリSOLD実績：${min}〜${max}程度`);
       }
 
       return L.join('\n');
@@ -185,6 +169,13 @@
       marketPriceMin: '',
       marketPriceMax: '',
       hasWriting: false,
+      // 利益計算フィールド
+      purchase: '',
+      purchaseShip: '',
+      sellPrice: '',
+      profitShippingMethod: 'らくらくメルカリ便',
+      profitSizeLabel: '',
+      profitCustomShip: '',
     };
 
     // ===== 共通UIパーツ =====
@@ -221,7 +212,7 @@
       );
     }
 
-    // ===== 画像解析（マルチAPI対応） =====
+    // ===== 画像から出品文を直接生成（マルチAPI対応） =====
     function toBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -231,27 +222,56 @@
       });
     }
 
-    const VISION_PROMPT = `フリマアプリ（メルカリ）用の商品情報をJSON形式のみで返してください。JSON以外の文字は一切出力しないでください。
-カテゴリは「家電」「衣類」「ホビー」「家具」「本」「その他」のいずれかにしてください。
-状態は「新品未使用」「未使用に近い」「目立った傷や汚れなし」「やや傷や汚れあり」「傷や汚れあり」のいずれかにしてください。
-不明な項目は空文字にしてください。
-この商品画像から情報を抽出してください:
-{"productName":"","category":"","brand":"","modelNumber":"","color":"","size":"","condition":"","notes":""}`;
+    const AI_LISTING_PROMPT = `画像に写っている商品を詳しく説明してください。
+画像から読み取れる情報をもとに、自然な日本語で記述してください。
+説明・コメントは不要です。以下のフォーマット厳守で出力してください。
+
+===LISTING===
+【商品名】
+（ブランド＋商品種別＋特徴を含む検索されやすいタイトル）
+
+【内容・特徴】
+（ブランド紹介・デザイン・用途など2〜4文）
+
+【サイズ/型番/仕様】
+・メーカー：
+・タイプ：
+・素材：
+・カラー：
+（判明する項目のみ記載）
+
+【状態・欠品・注意点】
+（画像から読み取れる傷・汚れ・状態を具体的に記載）
+中古品のため使用感あり、状態は写真にてご確認ください。
+
+【発送・付属品】
+本体のみの出品です。
+
+即購入OKです。
+値下げ交渉・バラ売りは対応しておりません。
+ペット・喫煙者なしの環境です。
+商品状態はできる限り正確に記載しておりますが、見落としがある場合があります。
+気になる点は購入前にご確認ください。
+梱包は丁寧に行いますが、リサイクル資材を使用する場合があります。
+===INFO===
+{"productName":"","brand":"","category":"家電/衣類/ホビー/家具/本/その他のいずれか","color":"","size":"","condition":"新品未使用/未使用に近い/目立った傷や汚れなし/やや傷や汚れあり/傷や汚れありのいずれか"}
+===END===`;
 
     // Google Gemini 単一モデルで呼び出し
-    async function callGeminiModel(model, base64, apiKey) {
+    async function callGeminiModel(model, images, apiKey) {
       const apiVer = model.startsWith('gemini-1.5') ? 'v1' : 'v1beta';
+      const parts = [{ text: AI_LISTING_PROMPT }];
+      for (const b64 of images) {
+        parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
+      }
       const res = await fetch(
         `https://generativelanguage.googleapis.com/${apiVer}/models/${model}:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [
-              { text: VISION_PROMPT },
-              { inline_data: { mime_type: 'image/jpeg', data: base64 } },
-            ]}],
-            generationConfig: { maxOutputTokens: 400 },
+            contents: [{ parts }],
+            generationConfig: { maxOutputTokens: 1500 },
           }),
         }
       );
@@ -262,9 +282,8 @@
       }
       const data = await res.json();
       const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      const match = content.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('JSONの解析に失敗しました');
-      return JSON.parse(match[0]);
+      if (!content) throw new Error('レスポンスが空でした');
+      return content;
     }
 
     // Geminiモデルを無料枠が広いものから順に試す
@@ -274,39 +293,39 @@
       'gemini-2.0-flash',        // 無料: 地域によって制限あり
     ];
 
-    async function analyzeWithGemini(base64, apiKey) {
+    async function generateWithGemini(images, apiKey) {
       let lastErr = '';
       for (const model of GEMINI_MODELS) {
         try {
-          return await callGeminiModel(model, base64, apiKey);
+          return await callGeminiModel(model, images, apiKey);
         } catch (err) {
           lastErr = err.message;
-          // quotaエラー or not found → 次モデルへ
           if (
             err.message.includes('quota') || err.message.includes('Quota') ||
             err.message.includes('not found') || err.message.includes('429')
           ) continue;
-          throw err; // quota以外のエラー（認証など）はすぐ投げる
+          throw err;
         }
       }
       throw new Error('Gemini無料枠が利用不可です（日本では制限される場合があります）。設定画面でOpenAI APIキーを登録するか、Geminiに課金設定してください');
     }
 
     // OpenAI GPT-4o（有料）
-    async function analyzeWithOpenAI(base64, apiKey) {
+    async function generateWithOpenAI(images, apiKey) {
+      const content = [
+        { type: 'text', text: AI_LISTING_PROMPT },
+        ...images.map(b64 => ({
+          type: 'image_url',
+          image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'low' },
+        })),
+      ];
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify({
           model: 'gpt-4o',
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}`, detail: 'low' } },
-              { type: 'text', text: VISION_PROMPT },
-            ],
-          }],
-          max_tokens: 400,
+          messages: [{ role: 'user', content }],
+          max_tokens: 1500,
         }),
       });
       if (!res.ok) {
@@ -314,17 +333,14 @@
         throw new Error(err.error?.message || `OpenAI HTTPエラー ${res.status}`);
       }
       const data = await res.json();
-      const content = data.choices[0].message.content;
-      const match = content.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('JSONの解析に失敗しました');
-      return JSON.parse(match[0]);
+      return data.choices[0].message.content;
     }
 
-    // 無料プラン優先で登録済みAPIを順番に試す
-    async function analyzeProductImageAuto(base64, settings) {
+    // 無料優先で登録済みAPIを順番に試す
+    async function generateListingFromImages(images, settings) {
       const apis = [];
-      if (settings?.geminiApiKey) apis.push({ name: 'Gemini', fn: () => analyzeWithGemini(base64, settings.geminiApiKey) });
-      if (settings?.openaiApiKey) apis.push({ name: 'OpenAI', fn: () => analyzeWithOpenAI(base64, settings.openaiApiKey) });
+      if (settings?.geminiApiKey) apis.push({ name: 'Gemini', fn: () => generateWithGemini(images, settings.geminiApiKey) });
+      if (settings?.openaiApiKey) apis.push({ name: 'OpenAI', fn: () => generateWithOpenAI(images, settings.openaiApiKey) });
       if (apis.length === 0) throw new Error('APIキーが未登録です。設定画面でGemini（無料）またはOpenAIのキーを登録してください');
       let lastError = '';
       for (const api of apis) {
@@ -334,53 +350,168 @@
       throw new Error(lastError);
     }
 
+    // AIレスポンスから出品文とJSON情報を分離
+    function parseAIResponse(raw) {
+      const listingMatch = raw.match(/===LISTING===\s*([\s\S]*?)\s*===INFO===/);
+      const infoMatch    = raw.match(/===INFO===\s*(\{[\s\S]*?\})\s*===END===/);
+      const listingText  = listingMatch ? listingMatch[1].trim() : raw.trim();
+      let info = {};
+      if (infoMatch) {
+        try { info = JSON.parse(infoMatch[1]); } catch {}
+      }
+      return { listingText, info };
+    }
+
+    // ===== AI相場調査 =====
+    async function callGeminiText(prompt, apiKey) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 300 },
+          }),
+        }
+      );
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `HTTPエラー ${res.status}`); }
+      const data = await res.json();
+      return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    }
+
+    async function callOpenAIText(prompt, apiKey) {
+      const cleanKey = (apiKey || '').trim();
+      // Fetch APIはヘッダー値にISO-8859-1範囲外の文字を許可しない
+      if ([...cleanKey].some(c => c.charCodeAt(0) > 0xFF)) {
+        throw new Error('APIキーに無効な文字が含まれています。設定画面で再入力してください');
+      }
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cleanKey}` },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], max_tokens: 300 }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `OpenAI HTTPエラー ${res.status}`); }
+      const data = await res.json();
+      return data.choices[0].message.content;
+    }
+
+    async function fetchMarketPriceFromAI(productName, settings) {
+      const prompt = `「${productName}」をフリマアプリで中古販売する場合の一般的な価格帯を、あなたの知識に基づいて教えてください。
+JSONのみ出力してください（説明不要）。
+
+{"avgSoldPrice":数値,"maxSoldPrice":数値,"minListedPrice":数値,"note":"補足20字以内"}
+
+- avgSoldPrice: 中古品として売れやすい価格の目安（円・整数）
+- maxSoldPrice: 状態が良い場合に期待できる上限価格（円・整数）
+- minListedPrice: 安値出品の下限目安（円・整数）
+- note: 価格に影響する主な要因（状態・人気度など）`;
+
+      const tryParse = raw => {
+        const m = raw.match(/\{[\s\S]*?\}/);
+        if (!m) throw new Error('JSONパース失敗');
+        return JSON.parse(m[0]);
+      };
+
+      let lastError = '';
+      if (settings?.geminiApiKey) {
+        try { return tryParse(await callGeminiText(prompt, settings.geminiApiKey)); }
+        catch (e) { lastError = `Gemini: ${e.message}`; }
+      }
+      if (settings?.openaiApiKey) {
+        try { return tryParse(await callOpenAIText(prompt, settings.openaiApiKey)); }
+        catch (e) { lastError = `OpenAI: ${e.message}`; }
+      }
+      throw new Error(lastError || 'APIキーが未登録です。設定画面でGemini（無料）またはOpenAIのキーを登録してください');
+    }
+
+    // ===== Google Sheets 連携 =====
+    async function postToSheet(gasUrl, data) {
+      if (!gasUrl) return;
+      const payload = {
+        savedAt:       data.savedAt,
+        productName:   data.productName,
+        category:      data.category,
+        condition:     data.condition,
+        sellPrice:     data.sellPrice || 0,
+        purchase:      data.purchase || 0,
+        purchaseShip:  data.purchaseShip || 0,
+        calcShipCost:  data.calcShipCost || 0,
+        calcFee:       data.calcFee || 0,
+        calcProfit:    data.calcProfit || 0,
+        calcProfitRate: data.calcProfitRate || 0,
+      };
+      // no-cors で送信（GASはCORSヘッダーを返さないため）
+      await fetch(gasUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
+      });
+    }
+
     // ===== Phase 1: 出品文ジェネレーター =====
-    function ListingGenerator({ marketMemos, onSave, editData, onEditClear, settings }) {
+    function ListingGenerator({ marketMemos, onSave, onSaveMarketMemo, editData, onEditClear, settings }) {
       const [form, setForm] = useState(editData || defaultListing);
       const [copied, setCopied] = useState(false);
       const [saved, setSaved] = useState(false);
-      const [analyzing, setAnalyzing] = useState(false);
-      const [analyzeError, setAnalyzeError] = useState('');
+      const [generating, setGenerating] = useState(false);
+      const [genError, setGenError] = useState('');
+      const [aiText, setAiText] = useState('');       // AI生成テキスト（設定時はプレビューに表示）
+      const [selectedCount, setSelectedCount] = useState(0);
       const fileInputRef = useRef(null);
+      const [marketData, setMarketData] = useState(null);
+      const [fetchingMarket, setFetchingMarket] = useState(false);
+      const [marketError, setMarketError] = useState('');
 
-      async function handleImageChange(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        setAnalyzing(true);
-        setAnalyzeError('');
+      async function handleImagesChange(e) {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+        setSelectedCount(files.length);
+        setGenerating(true);
+        setGenError('');
+        setAiText('');
         try {
-          const base64 = await toBase64(file);
-          const result = await analyzeProductImageAuto(base64, settings);
-          // 空文字でない項目のみ上書き
+          const images = await Promise.all(files.map(toBase64));
+          const raw = await generateListingFromImages(images, settings);
+          const { listingText, info } = parseAIResponse(raw);
+          setAiText(listingText);
+          // フォーム項目にも反映（空でない項目のみ上書き）
           setForm(f => {
             const merged = { ...f };
-            const allowed = ['productName','category','brand','modelNumber','color','size','condition','notes'];
-            allowed.forEach(k => { if (result[k]) merged[k] = result[k]; });
+            ['productName','brand','category','color','size','condition'].forEach(k => {
+              if (info[k]) merged[k] = info[k];
+            });
             return merged;
           });
         } catch (err) {
-          setAnalyzeError(err.message);
+          setGenError(err.message);
         } finally {
-          setAnalyzing(false);
+          setGenerating(false);
           e.target.value = '';
         }
       }
 
       useEffect(() => {
-        if (editData) setForm(editData);
+        if (editData) {
+          setForm(editData);
+          // 保存済みの出品文テキストがあれば復元
+          setAiText(editData.listingText || '');
+        }
       }, [editData]);
 
       const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
       const setAcc = (k, v) => setForm(f => ({ ...f, accessories: { ...f.accessories, [k]: v } }));
 
-      const text = generateText(form);
+      // プレビューに表示するテキスト（AI生成優先）
+      const previewText = aiText || generateText(form);
 
       async function handleCopy() {
         try {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(previewText);
         } catch {
           const el = document.createElement('textarea');
-          el.value = text;
+          el.value = previewText;
           document.body.appendChild(el);
           el.select();
           document.execCommand('copy');
@@ -391,7 +522,25 @@
       }
 
       function handleSave() {
-        const data = { ...form, id: form.id || genId(), savedAt: new Date().toISOString() };
+        const listingText = aiText || generateText(form);
+        // 利益計算値を計算して一緒に保存
+        const hasSizes = form.profitShippingMethod in SHIPPING_COSTS;
+        const shipCost = hasSizes
+          ? (SHIPPING_COSTS[form.profitShippingMethod]?.find(o => o.label === form.profitSizeLabel)?.cost ?? 0)
+          : (parseFloat(form.profitCustomShip) || 0);
+        const sp = parseFloat(form.sellPrice) || 0;
+        const fee = Math.round(sp * 0.1);
+        const profit = sp - (parseFloat(form.purchase) || 0) - (parseFloat(form.purchaseShip) || 0) - shipCost - fee;
+        const profitRate = sp > 0 ? (profit / sp) * 100 : 0;
+        const data = {
+          ...form, listingText,
+          id: form.id || genId(),
+          savedAt: new Date().toISOString(),
+          calcShipCost: shipCost,
+          calcFee: fee,
+          calcProfit: profit,
+          calcProfitRate: Math.round(profitRate * 10) / 10,
+        };
         onSave(data);
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
@@ -399,7 +548,24 @@
 
       function handleNew() {
         setForm(defaultListing);
+        setAiText('');
+        setMarketData(null);
         onEditClear();
+      }
+
+      async function handleFetchMarket() {
+        if (!form.productName) return;
+        setFetchingMarket(true);
+        setMarketError('');
+        setMarketData(null);
+        try {
+          const data = await fetchMarketPriceFromAI(form.productName, settings);
+          setMarketData(data);
+        } catch (err) {
+          setMarketError(err.message);
+        } finally {
+          setFetchingMarket(false);
+        }
       }
 
       function handleMarketSelect(e) {
@@ -423,23 +589,23 @@
                 {editData && (
                   <button onClick={handleNew} className="text-xs text-blue-500 hover:underline">新規作成</button>
                 )}
-                {/* 写真から自動入力ボタン */}
+                {/* 写真から出品文生成ボタン */}
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={analyzing}
+                  disabled={generating}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    analyzing
+                    generating
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                       : 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
                   }`}
                 >
-                  {analyzing ? (
+                  {generating ? (
                     <>
                       <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                       </svg>
-                      解析中...
+                      生成中...
                     </>
                   ) : (
                     <>
@@ -447,7 +613,7 @@
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
-                      写真から自動入力
+                      写真から出品文を生成
                     </>
                   )}
                 </button>
@@ -455,15 +621,20 @@
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
-
+                  multiple
                   className="hidden"
-                  onChange={handleImageChange}
+                  onChange={handleImagesChange}
                 />
               </div>
             </div>
-            {analyzeError && (
+            {genError && (
               <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
-                {analyzeError}
+                {genError}
+              </div>
+            )}
+            {aiText && (
+              <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+                写真{selectedCount}枚から出品文を生成しました。右側で編集・コピーできます。
               </div>
             )}
 
@@ -576,23 +747,155 @@
             </Field>
 
             <div className="border-t border-gray-100 pt-3 mt-1">
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-1.5">
                 <span className="text-xs font-medium text-gray-600">参考相場（⑦）</span>
-                {marketMemos.length > 0 && (
-                  <select
-                    className="text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
-                    defaultValue=""
-                    onChange={handleMarketSelect}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {marketMemos.length > 0 && (
+                    <select
+                      className="text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
+                      defaultValue=""
+                      onChange={handleMarketSelect}
+                    >
+                      <option value="">相場メモから引用...</option>
+                      {marketMemos.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.productName}（¥{m.minPrice.toLocaleString()}〜¥{m.maxPrice.toLocaleString()}）
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleFetchMarket}
+                    disabled={!form.productName || fetchingMarket}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                      !form.productName || fetchingMarket
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-violet-50 text-violet-600 hover:bg-violet-100 border border-violet-200'
+                    }`}
                   >
-                    <option value="">相場メモから引用...</option>
-                    {marketMemos.map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.productName}（¥{m.minPrice.toLocaleString()}〜¥{m.maxPrice.toLocaleString()}）
-                      </option>
-                    ))}
-                  </select>
-                )}
+                    {fetchingMarket ? (
+                      <>
+                        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                        </svg>
+                        調査中...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        AI相場調査
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
+
+              {marketError && (
+                <div className="mb-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
+                  {marketError}
+                </div>
+              )}
+
+              {marketData && (
+                <div className="mb-3 p-3 bg-violet-50 border border-violet-200 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-violet-700">AI推定相場（参考値）</span>
+                    <button onClick={() => setMarketData(null)} className="text-xs text-violet-400 hover:text-violet-600 px-1">×</button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    <div className="bg-white rounded-lg p-2 text-center border border-violet-100">
+                      <div className="text-xs text-gray-500 mb-0.5">直近平均売値</div>
+                      <div className="text-sm font-bold text-gray-800">¥{(marketData.avgSoldPrice||0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-2 text-center border border-violet-100">
+                      <div className="text-xs text-gray-500 mb-0.5">直近最高売値</div>
+                      <div className="text-sm font-bold text-green-600">¥{(marketData.maxSoldPrice||0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-2 text-center border border-violet-100">
+                      <div className="text-xs text-gray-500 mb-0.5">出品中最安値</div>
+                      <div className="text-sm font-bold text-orange-500">¥{(marketData.minListedPrice||0).toLocaleString()}</div>
+                    </div>
+                  </div>
+                  {marketData.note && <div className="text-xs text-violet-600 mb-2">{marketData.note}</div>}
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        set('marketPriceMin', String(marketData.minListedPrice || ''));
+                        set('marketPriceMax', String(marketData.maxSoldPrice || ''));
+                      }}
+                      className="flex-1 py-1 text-xs rounded border border-violet-300 text-violet-600 hover:bg-violet-100 transition-colors"
+                    >
+                      相場欄に反映
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSaveMarketMemo({
+                        id: genId(),
+                        productName: form.productName,
+                        minPrice: marketData.minListedPrice || 0,
+                        maxPrice: marketData.maxSoldPrice || 0,
+                        referenceDate: new Date().toISOString().slice(0, 10),
+                        source: 'AI推定',
+                      })}
+                      className="flex-1 py-1 text-xs rounded border border-violet-300 text-violet-600 hover:bg-violet-100 transition-colors"
+                    >
+                      相場メモに保存
+                    </button>
+                  </div>
+                  {/* 参照URL一覧 */}
+                  <div className="mt-2 pt-2 border-t border-violet-100">
+                    <div className="text-xs text-violet-600 font-medium mb-1.5">参照URL（価格を直接確認）</div>
+                    <div className="flex flex-col gap-1">
+                      {[
+                        {
+                          label: 'メルカリ（売り切れ）',
+                          url: `https://www.mercari.com/jp/search/?keyword=${encodeURIComponent(form.productName)}&status=sold_out`,
+                          color: 'text-red-500',
+                        },
+                        {
+                          label: 'メルカリ（出品中）',
+                          url: `https://www.mercari.com/jp/search/?keyword=${encodeURIComponent(form.productName)}`,
+                          color: 'text-red-400',
+                        },
+                        {
+                          label: 'ヤフオク（落札済み）',
+                          url: `https://auctions.yahoo.co.jp/search/search?p=${encodeURIComponent(form.productName)}&va=${encodeURIComponent(form.productName)}&auccat=0&tab_ex=commerce&ei=utf-8&aq=-1&oq=&sc_i=&exflg=1&b=1&n=50&s1=end&o1=d&st=closed`,
+                          color: 'text-purple-500',
+                        },
+                        {
+                          label: 'ラクマ',
+                          url: `https://fril.jp/s?query=${encodeURIComponent(form.productName)}&sold=1`,
+                          color: 'text-green-600',
+                        },
+                        {
+                          label: 'PayPayフリマ',
+                          url: `https://paypayflea.com/search?q=${encodeURIComponent(form.productName)}&status=closed`,
+                          color: 'text-yellow-600',
+                        },
+                      ].map(({ label, url, color }) => (
+                        <a
+                          key={label}
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`flex items-center gap-1.5 text-xs ${color} hover:underline truncate`}
+                        >
+                          <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                          {label}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 shrink-0">¥</span>
                 <Input
@@ -610,13 +913,106 @@
                 />
               </div>
             </div>
+
+            {/* 利益計算セクション */}
+            <div className="border-t border-gray-100 pt-3 mt-1">
+              <h3 className="text-xs font-medium text-gray-600 mb-2">利益計算</h3>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Field label="仕入れ価格（円）">
+                    <Input type="number" value={form.purchase} onChange={e => set('purchase', e.target.value)} placeholder="0" min="0" />
+                  </Field>
+                </div>
+                <div className="flex-1">
+                  <Field label="仕入れ送料（円）">
+                    <Input type="number" value={form.purchaseShip} onChange={e => set('purchaseShip', e.target.value)} placeholder="0" min="0" />
+                  </Field>
+                </div>
+              </div>
+              <Field label="出品予定価格（円）">
+                <Input type="number" value={form.sellPrice} onChange={e => set('sellPrice', e.target.value)} placeholder="0" min="0" />
+              </Field>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Field label="発送方法（送料用）">
+                    <Select value={form.profitShippingMethod} onChange={e => { set('profitShippingMethod', e.target.value); set('profitSizeLabel', ''); }}>
+                      {SHIPPING_METHODS.map(m => <option key={m}>{m}</option>)}
+                    </Select>
+                  </Field>
+                </div>
+                <div className="flex-1">
+                  {(form.profitShippingMethod in SHIPPING_COSTS) ? (
+                    <Field label="サイズ">
+                      <Select value={form.profitSizeLabel} onChange={e => set('profitSizeLabel', e.target.value)}>
+                        <option value="">選択</option>
+                        {SHIPPING_COSTS[form.profitShippingMethod].map(o => (
+                          <option key={o.label} value={o.label}>{o.label}（¥{o.cost.toLocaleString()}）</option>
+                        ))}
+                      </Select>
+                    </Field>
+                  ) : (
+                    <Field label="送料（円）">
+                      <Input type="number" value={form.profitCustomShip} onChange={e => set('profitCustomShip', e.target.value)} placeholder="0" min="0" />
+                    </Field>
+                  )}
+                </div>
+              </div>
+              {/* 利益サマリー */}
+              {(() => {
+                const hasSizes = form.profitShippingMethod in SHIPPING_COSTS;
+                const shipCost = hasSizes
+                  ? (SHIPPING_COSTS[form.profitShippingMethod]?.find(o => o.label === form.profitSizeLabel)?.cost ?? 0)
+                  : (parseFloat(form.profitCustomShip) || 0);
+                const p  = parseFloat(form.purchase) || 0;
+                const ps = parseFloat(form.purchaseShip) || 0;
+                const sp = parseFloat(form.sellPrice) || 0;
+                const fee = Math.round(sp * 0.1);
+                const profit = sp - p - ps - shipCost - fee;
+                const rate = sp > 0 ? (profit / sp) * 100 : 0;
+                const threshold = settings.profitThreshold ?? 15;
+                if (!sp) return null;
+                const isOK = rate >= threshold;
+                return (
+                  <div className={`p-2.5 rounded-lg border text-xs ${isOK ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200'}`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-gray-500">純利益</span>
+                      <span className={`font-bold text-base ${profit >= 0 ? 'text-green-600' : 'text-red-500'}`}>¥{profit.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-gray-500">利益率</span>
+                      <span className={`font-semibold ${rate >= threshold ? 'text-green-600' : 'text-orange-500'}`}>{rate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 text-gray-400 mt-1 border-t border-current border-opacity-20 pt-1">
+                      <span>手数料 ¥{fee.toLocaleString()}</span>
+                      <span>送料 ¥{shipCost.toLocaleString()}</span>
+                    </div>
+                    <div className={`text-center font-bold mt-1.5 ${isOK ? 'text-green-700' : 'text-orange-700'}`}>
+                      {isOK ? '仕入れOK' : '要検討'}（閾値 {threshold}%）
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
 
           {/* 右：プレビュー */}
           <div className="lg:w-1/2 bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col">
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
-              <h2 className="font-bold text-gray-800">出品文プレビュー</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold text-gray-800">出品文プレビュー</h2>
+                {aiText && (
+                  <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full font-medium">AI生成</span>
+                )}
+              </div>
               <div className="flex gap-2">
+                {aiText && (
+                  <button
+                    onClick={() => setAiText('')}
+                    className="px-3 py-1.5 rounded-md text-xs font-medium text-gray-500 hover:bg-gray-100 transition-all duration-150"
+                  >
+                    フォームに戻る
+                  </button>
+                )}
                 <button
                   onClick={handleCopy}
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150 ${
@@ -639,10 +1035,18 @@
                 </button>
               </div>
             </div>
-            <div className="preview-text text-xs text-gray-700 bg-gray-50 rounded-lg p-3 flex-1 overflow-auto leading-relaxed min-h-64 font-mono">
-              {text}
-            </div>
-            <div className="text-xs text-gray-400 text-right mt-1.5">{text.length} 文字</div>
+            {aiText ? (
+              <textarea
+                className="text-xs text-gray-700 bg-gray-50 rounded-lg p-3 flex-1 leading-relaxed min-h-64 font-mono border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
+                value={aiText}
+                onChange={e => setAiText(e.target.value)}
+              />
+            ) : (
+              <div className="preview-text text-xs text-gray-700 bg-gray-50 rounded-lg p-3 flex-1 overflow-auto leading-relaxed min-h-64 font-mono">
+                {previewText}
+              </div>
+            )}
+            <div className="text-xs text-gray-400 text-right mt-1.5">{previewText.length} 文字</div>
           </div>
         </div>
       );
@@ -825,7 +1229,22 @@
                       </span>
                     )}
                   </div>
-                  {item.brand && <div className="text-xs text-gray-400 mb-3 truncate">{item.brand}</div>}
+                  {item.brand && <div className="text-xs text-gray-400 mb-2 truncate">{item.brand}</div>}
+                  {/* 利益情報 */}
+                  {item.sellPrice > 0 && (
+                    <div className={`mb-2 px-2 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                      item.calcProfit >= 0 ? 'bg-green-50 border border-green-100' : 'bg-red-50 border border-red-100'
+                    }`}>
+                      <span className="text-gray-500">
+                        ¥{Number(item.sellPrice).toLocaleString()} 出品
+                        {item.purchase > 0 && ` / 仕入¥${Number(item.purchase).toLocaleString()}`}
+                      </span>
+                      <span className={`font-bold ${item.calcProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        {item.calcProfit != null ? `¥${item.calcProfit.toLocaleString()}` : ''}
+                        {item.calcProfitRate != null ? ` (${item.calcProfitRate}%)` : ''}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex gap-1.5">
                     <button onClick={() => onEdit(item)}     className="flex-1 py-1.5 text-xs rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors">編集</button>
                     <button onClick={() => onDuplicate(item)} className="flex-1 py-1.5 text-xs rounded-lg border border-green-200 text-green-600 hover:bg-green-50 transition-colors">複製</button>
@@ -983,9 +1402,10 @@
       const [threshold, setThreshold] = useState(String(settings.profitThreshold ?? 15));
       const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey ?? '');
       const [openaiKey, setOpenaiKey] = useState(settings.openaiApiKey ?? '');
+      const [gasUrl, setGasUrl]       = useState(settings.gasUrl ?? '');
       return (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full my-4">
             <h3 className="font-bold text-gray-800 mb-4">設定</h3>
 
             <Field label="仕入れOK判定の利益率閾値（%）">
@@ -1003,12 +1423,58 @@
             <p className="text-xs text-gray-400 -mt-2 mb-4">
               <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">キーを取得</a>
             </p>
-            <p className="text-xs text-gray-400 mb-4">キーはこのデバイスのlocalStorageにのみ保存されます。</p>
+            <p className="text-xs text-gray-400 mb-4">APIキーはこのデバイスのlocalStorageにのみ保存されます。</p>
+
+            <div className="border-t border-gray-100 pt-4 mb-4">
+              <p className="text-xs font-medium text-gray-600 mb-1">Google スプレッドシート連携</p>
+              <p className="text-xs text-gray-400 mb-2">
+                出品履歴を自動記録できます。Google Apps Script の Web App URL を貼り付けてください。
+                <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline ml-1">GASを開く</a>
+              </p>
+              <Field label="GAS Web App URL">
+                <Input
+                  type="url"
+                  value={gasUrl}
+                  onChange={e => setGasUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/..."
+                />
+              </Field>
+              <details className="text-xs text-gray-400 mt-1">
+                <summary className="cursor-pointer hover:text-gray-600">GASのセットアップ方法</summary>
+                <div className="mt-2 space-y-1 bg-gray-50 rounded p-2 font-mono text-[11px] leading-relaxed">
+                  <p>1. script.google.com で新規プロジェクト作成</p>
+                  <p>2. 以下をコード.gsに貼り付け:</p>
+                  <pre className="whitespace-pre-wrap break-all bg-white border border-gray-200 rounded p-1.5 mt-1">{`function doPost(e) {
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getActiveSheet();
+  const d = JSON.parse(e.postData.contents);
+  const headers = ['保存日時','商品名','カテゴリ',
+    '状態','出品価格','仕入れ価格','仕入れ送料',
+    '出品送料','手数料','純利益','利益率(%)'];
+  if (sheet.getLastRow() === 0)
+    sheet.appendRow(headers);
+  sheet.appendRow([
+    d.savedAt, d.productName, d.category,
+    d.condition, d.sellPrice, d.purchase,
+    d.purchaseShip, d.calcShipCost, d.calcFee,
+    d.calcProfit, d.calcProfitRate
+  ]);
+  return ContentService
+    .createTextOutput('ok');
+}
+`}</pre>
+                  <p>3. デプロイ → 新しいデプロイ → ウェブアプリ</p>
+                  <p>4. 「アクセスできるユーザー」を「全員」に設定</p>
+                  <p>5. デプロイして発行されたURLを上に貼り付け</p>
+                </div>
+              </details>
+            </div>
 
             <div className="flex gap-2">
               <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">キャンセル</button>
               <button
-                onClick={() => { onSave({ profitThreshold: parseInt(threshold) || 15, geminiApiKey: geminiKey.trim(), openaiApiKey: openaiKey.trim() }); onClose(); }}
+                onClick={() => { onSave({ profitThreshold: parseInt(threshold) || 15, geminiApiKey: geminiKey.trim(), openaiApiKey: openaiKey.trim(), gasUrl: gasUrl.trim() }); onClose(); }}
                 className="flex-1 py-2 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600"
               >
                 保存
@@ -1035,6 +1501,7 @@
       }
 
       function handleSaveListing(data) {
+        const isNew = !listings.find(l => l.id === data.id);
         setListings(prev => {
           const idx = prev.findIndex(l => l.id === data.id);
           if (idx >= 0) {
@@ -1044,7 +1511,14 @@
           }
           return [data, ...prev];
         });
-        showToast(editData ? '更新しました' : '保存しました');
+        // 新規保存時のみシートに追記（更新は重複するため除外）
+        if (isNew && settings.gasUrl) {
+          postToSheet(settings.gasUrl, data)
+            .then(() => showToast('保存 & シートに記録しました'))
+            .catch(() => showToast('保存しました（シート記録失敗）'));
+        } else {
+          showToast(editData ? '更新しました' : '保存しました');
+        }
       }
 
       function handleEdit(item) {
@@ -1076,7 +1550,6 @@
 
       const tabs = [
         { id: 'generator', label: '出品文作成' },
-        { id: 'profit',    label: '利益計算' },
         { id: 'history',   label: `出品履歴（${listings.length}）` },
         { id: 'market',    label: `相場メモ（${marketMemos.length}）` },
       ];
@@ -1137,13 +1610,11 @@
               <ListingGenerator
                 marketMemos={marketMemos}
                 onSave={handleSaveListing}
+                onSaveMarketMemo={handleSaveMarketMemo}
                 editData={editData}
                 onEditClear={() => setEditData(null)}
                 settings={settings}
               />
-            )}
-            {tab === 'profit' && (
-              <ProfitCalculator settings={settings} />
             )}
             {tab === 'history' && (
               <ListingHistory
