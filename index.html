@@ -428,26 +428,21 @@ JSONのみ出力してください（説明不要）。
     // ===== Google Sheets 連携 =====
     async function postToSheet(gasUrl, data) {
       if (!gasUrl) return;
-      const payload = {
-        savedAt:       data.savedAt,
-        productName:   data.productName,
-        category:      data.category,
-        condition:     data.condition,
-        sellPrice:     data.sellPrice || 0,
-        purchase:      data.purchase || 0,
-        purchaseShip:  data.purchaseShip || 0,
-        calcShipCost:  data.calcShipCost || 0,
-        calcFee:       data.calcFee || 0,
-        calcProfit:    data.calcProfit || 0,
+      // GASはGETクエリパラメータ方式が最も確実
+      const params = new URLSearchParams({
+        savedAt:        data.savedAt || '',
+        productName:    data.productName || '',
+        category:       data.category || '',
+        condition:      data.condition || '',
+        sellPrice:      data.sellPrice || 0,
+        purchase:       data.purchase || 0,
+        purchaseShip:   data.purchaseShip || 0,
+        calcShipCost:   data.calcShipCost || 0,
+        calcFee:        data.calcFee || 0,
+        calcProfit:     data.calcProfit || 0,
         calcProfitRate: data.calcProfitRate || 0,
-      };
-      // no-cors で送信（GASはCORSヘッダーを返さないため）
-      await fetch(gasUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload),
       });
+      await fetch(`${gasUrl}?${params.toString()}`);
     }
 
     // ===== Phase 1: 出品文ジェネレーター =====
