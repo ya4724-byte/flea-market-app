@@ -280,15 +280,20 @@
     // 固定フォーマット（パーサーが依存するため変更不可）
     const AI_FORMAT_SUFFIX = `
 ===LISTING===
-①（ブランド＋商品種別＋特徴を含む検索されやすいタイトル・40文字前後）
+【商品名】
+（ブランド＋商品種別＋特徴を含む検索されやすいタイトル・40文字前後）
 
-②（商品の魅力・用途・特徴を購入者目線で具体的に記載）
+【内容・特徴】
+（商品の魅力・用途・特徴を購入者目線で具体的に記載）
 
-③（画像から読み取れる情報のみ。不明項目は「不明」と明記）
+【サイズ/型番/仕様】
+（画像から読み取れる情報のみ。不明項目は「不明」と明記）
 
-④（画像から読み取れる傷・汚れ・使用感を正直に記載）
+【状態・欠品・注意点】
+（画像から読み取れる傷・汚れ・使用感を正直に記載）
 
-⑤（付属品の有無・配送方法を明記）
+【発送・付属品】
+（付属品の有無・配送方法を明記）
 
 即購入OKです。
 値下げ交渉・バラ売りは対応しておりません。
@@ -357,10 +362,21 @@
     function parseAIResponse(raw) {
       const listingMatch = raw.match(/===LISTING===\s*([\s\S]*?)\s*===INFO===/);
       const infoMatch    = raw.match(/===INFO===\s*(\{[\s\S]*?\})\s*===END===/);
-      // フォーマット不一致＝AIが拒否または予期しない返答
-      if (!listingMatch) throw new Error(`AIが正しい形式で返答しませんでした。補足情報を追加するか、別の画像を試してください。\n\n（AIの返答: ${raw.slice(0, 100)}…）`);
-      const listingText = listingMatch[1].trim();
-      let info = {};
+      let listingText, info = {};
+
+      if (listingMatch) {
+        // マーカーが揃っている場合は正規抽出
+        listingText = listingMatch[1].trim();
+      } else {
+        // マーカーなし：3行未満の明らかに短い返答のみエラー
+        const nonEmptyLines = raw.split('\n').filter(l => l.trim()).length;
+        if (nonEmptyLines < 3) {
+          throw new Error(`AIの返答が短すぎます。補足情報を追加するか、別の画像を試してください。\n\n（AIの返答: ${raw.slice(0, 100)}…）`);
+        }
+        // マーカーなしでも内容があればそのまま使用
+        listingText = raw.replace(/===INFO===[\s\S]*?===END===/g, '').trim();
+      }
+
       if (infoMatch) {
         try { info = JSON.parse(infoMatch[1]); } catch {}
       }
