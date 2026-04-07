@@ -494,7 +494,7 @@ JSONのみ出力してください（説明不要）。
           let lastErr = '';
           for (let attempt = 1; attempt <= maxRetry; attempt++) {
             try {
-              if (attempt > 1) setGenError(`フォーマット不一致のためリトライ中... (${attempt}/${maxRetry})`);
+              if (attempt > 1) setGenError(`AIの返答が不正のためリトライ中... (${attempt}/${maxRetry})`);
               const raw = await generateListingFromImages(images, settings, supplementText);
               const { listingText, info } = parseAIResponse(raw);
               setGenError('');
@@ -510,8 +510,8 @@ JSONのみ出力してください（説明不要）。
               return; // 成功したら終了
             } catch (err) {
               lastErr = err.message;
-              // APIエラー（クォータ・認証等）はリトライしない
-              if (!err.message.includes('フォーマット不一致') && !err.message.includes('正しい形式')) throw err;
+              // APIエラー（クォータ・認証等）はリトライしない。パース失敗はリトライ対象
+              if (!err.message.includes('フォーマット不一致') && !err.message.includes('正しい形式') && !err.message.includes('短すぎます')) throw err;
             }
           }
           throw new Error(`${maxRetry}回試みましたが正常な応答を取得できませんでした。補足情報を追加するか、別の画像をお試しください。`);
