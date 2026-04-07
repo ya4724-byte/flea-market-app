@@ -373,8 +373,16 @@
         if (nonEmptyLines < 3) {
           throw new Error(`AIの返答が短すぎます。補足情報を追加するか、別の画像を試してください。\n\n（AIの返答: ${raw.slice(0, 100)}…）`);
         }
-        // マーカーなしでも内容があればそのまま使用
         listingText = raw.replace(/===INFO===[\s\S]*?===END===/g, '').trim();
+      }
+
+      // 【商品名】等の見出しより前にある前置き・謝罪文を除去
+      const headerIdx = listingText.search(/【商品名】|【内容|【サイズ|【状態|【発送/);
+      if (headerIdx > 0) {
+        listingText = listingText.slice(headerIdx).trim();
+      } else if (headerIdx === -1) {
+        // 既知の見出しが全くない場合はリトライ対象
+        throw new Error(`AIが正しい形式で返答しませんでした。補足情報を追加するか、別の画像を試してください。\n\n（AIの返答: ${raw.slice(0, 100)}…）`);
       }
 
       if (infoMatch) {
