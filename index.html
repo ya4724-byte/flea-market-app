@@ -222,30 +222,73 @@
       });
     }
 
-    const AI_LISTING_PROMPT = `これはフリマアプリ（メルカリ等）の出品作業を補助するツールです。
-添付画像に写っている販売商品の情報を読み取り、出品文を作成してください。
-説明・コメントは不要です。以下のフォーマット厳守で出力してください。
+    // ユーザーが編集できる指示部分（デフォルト）
+    const AI_LISTING_INSTRUCTIONS = `添付画像に写っている販売商品の情報を読み取り、以下の条件に完全準拠してメルカリ出品用の商品説明文を作成してください。
+説明・コメントは不要です。フォーマット厳守で出力してください。
 
-===LISTING===
-【商品名】
-（ブランド＋商品種別＋特徴を含む検索されやすいタイトル）
+【合言葉】
+この商品の説明文作って#メルカリ固定ルール
+
+【出力ルール（絶対厳守）】
+①商品名
+②内容・特徴
+③サイズ/型番/仕様
+④状態・欠品・注意点
+⑤発送・付属品
+⑥販売にあたっての定型文（見出しは付けない）
+
+※順番変更・項目抜け・見出し追加は禁止
+※絵文字使用禁止
+※「発送は24時間以内」などの強制表現禁止
+※出所不明の情報（発売年など）記載禁止
+
+【商品名ルール】
+・検索に強いタイトルにする
+・ブランド名／型番／特徴を入れる
+・40文字前後で最適化
 
 【内容・特徴】
-（ブランド紹介・デザイン・用途など2〜4文）
+・商品の魅力・用途・特徴を具体的に記載
+・購入者目線でメリットを書く
+・根拠のない情報は書かない
 
-【サイズ/型番/仕様】
-・メーカー：
-・タイプ：
-・素材：
-・カラー：
-（判明する項目のみ記載）
+【サイズ/仕様】
+・画像・タグ・実物から読み取れる情報のみ記載
+・不明な情報は「不明」と明記
+・推測・憶測は禁止
 
-【状態・欠品・注意点】
-（画像から読み取れる傷・汚れ・状態を具体的に記載）
-中古品のため使用感あり、状態は写真にてご確認ください。
+【状態】
+・傷・汚れ・使用感を正直に記載
+・写真と整合性を取る
+・誇張・過小評価禁止
 
-【発送・付属品】
-本体のみの出品です。
+【発送】
+・付属品の有無を明記
+・配送方法は適切に判断
+・大型商品の場合はたのメル便なども検討
+
+【定型文（改変禁止・見出しなしで必ず入れる）】
+即購入OKです。
+値下げ交渉・バラ売りは対応しておりません。
+ペット・喫煙者なしの環境です。
+商品状態はできる限り正確に記載しておりますが、見落としがある場合があります。
+気になる点は購入前にご確認ください。
+梱包は丁寧に行いますが、リサイクル資材を使用する場合があります。
+
+出力前に3回チェックしてから出力すること。`;
+
+    // 固定フォーマット（パーサーが依存するため変更不可）
+    const AI_FORMAT_SUFFIX = `
+===LISTING===
+①（ブランド＋商品種別＋特徴を含む検索されやすいタイトル・40文字前後）
+
+②（商品の魅力・用途・特徴を購入者目線で具体的に記載）
+
+③（画像から読み取れる情報のみ。不明項目は「不明」と明記）
+
+④（画像から読み取れる傷・汚れ・使用感を正直に記載）
+
+⑤（付属品の有無・配送方法を明記）
 
 即購入OKです。
 値下げ交渉・バラ売りは対応しておりません。
@@ -257,74 +300,25 @@
 {"productName":"","brand":"","category":"家電/衣類/ホビー/家具/本/その他のいずれか","color":"","size":"","condition":"新品未使用/未使用に近い/目立った傷や汚れなし/やや傷や汚れあり/傷や汚れありのいずれか"}
 ===END===`;
 
-    // 補足テキストをプロンプトに追記
-    function buildPrompt(supplementText) {
-      if (!supplementText?.trim()) return AI_LISTING_PROMPT;
-      return AI_LISTING_PROMPT + `\n\n補足情報（ユーザー提供）:\n${supplementText.trim()}\n上記の補足情報も参考にして出品文を生成してください。`;
-    }
-
-    // Google Gemini 単一モデルで呼び出し
-    async function callGeminiModel(model, images, apiKey, supplementText = '') {
-      const apiVer = model.startsWith('gemini-1.5') ? 'v1' : 'v1beta';
-      const parts = [{ text: buildPrompt(supplementText) }];
-      for (const b64 of images) {
-        parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
+    // 指示＋固定フォーマット＋補足を結合
+    function buildPrompt(supplementText, customInstructions) {
+      const instructions = customInstructions || AI_LISTING_INSTRUCTIONS;
+      let prompt = instructions + '\n' + AI_FORMAT_SUFFIX;
+      if (supplementText?.trim()) {
+        prompt += `\n\n補足情報（ユーザー提供）:\n${supplementText.trim()}\n上記の補足情報も参考にして出品文を生成してください。`;
       }
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/${apiVer}/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: { maxOutputTokens: 1500 },
-          }),
-        }
-      );
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg = err.error?.message ?? '';
-        throw new Error(msg || `HTTPエラー ${res.status}`);
-      }
-      const data = await res.json();
-      const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      if (!content) throw new Error('レスポンスが空でした');
-      return content;
-    }
-
-    // Geminiモデルを無料枠が広いものから順に試す
-    const GEMINI_MODELS = [
-      'gemini-2.0-flash-lite',   // 無料: 30rpm / 1500 req/day
-      'gemini-1.5-flash',        // 無料: 15rpm / 1500 req/day
-      'gemini-2.0-flash',        // 無料: 地域によって制限あり
-    ];
-
-    async function generateWithGemini(images, apiKey, supplementText = '') {
-      let lastErr = '';
-      for (const model of GEMINI_MODELS) {
-        try {
-          return await callGeminiModel(model, images, apiKey, supplementText);
-        } catch (err) {
-          lastErr = err.message;
-          if (
-            err.message.includes('quota') || err.message.includes('Quota') ||
-            err.message.includes('not found') || err.message.includes('429')
-          ) continue;
-          throw err;
-        }
-      }
-      throw new Error('Gemini無料枠が利用不可です（日本では制限される場合があります）。設定画面でOpenAI APIキーを登録するか、Geminiに課金設定してください');
+      return prompt;
     }
 
     // OpenAI GPT-4o（有料）
-    async function generateWithOpenAI(images, apiKey, supplementText = '') {
+    async function generateWithOpenAI(images, apiKey, supplementText = '', basePrompt = '') {
       const cleanKey = (apiKey || '').trim();
       // Fetch APIはヘッダー値にISO-8859-1範囲外の文字を許可しない
       if ([...cleanKey].some(c => c.charCodeAt(0) > 0xFF)) {
         throw new Error('APIキーに無効な文字が含まれています。設定画面で再入力してください');
       }
       const content = [
-        { type: 'text', text: buildPrompt(supplementText) },
+        { type: 'text', text: buildPrompt(supplementText, basePrompt) },
         ...images.map(b64 => ({
           type: 'image_url',
           image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'low' },
@@ -347,12 +341,10 @@
       return data.choices[0].message.content;
     }
 
-    // 無料優先で登録済みAPIを順番に試す
     async function generateListingFromImages(images, settings, supplementText = '') {
       const apis = [];
-      if (settings?.geminiApiKey) apis.push({ name: 'Gemini', fn: () => generateWithGemini(images, settings.geminiApiKey, supplementText) });
-      if (settings?.openaiApiKey) apis.push({ name: 'OpenAI', fn: () => generateWithOpenAI(images, settings.openaiApiKey, supplementText) });
-      if (apis.length === 0) throw new Error('APIキーが未登録です。設定画面でGemini（無料）またはOpenAIのキーを登録してください');
+      if (settings?.openaiApiKey) apis.push({ name: 'OpenAI', fn: () => generateWithOpenAI(images, settings.openaiApiKey, supplementText, settings.aiPrompt || '') });
+      if (apis.length === 0) throw new Error('APIキーが未登録です。設定画面でOpenAI APIキーを登録してください');
       let lastError = '';
       for (const api of apis) {
         try { return await api.fn(); }
@@ -376,23 +368,6 @@
     }
 
     // ===== AI相場調査 =====
-    async function callGeminiText(prompt, apiKey) {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 300 },
-          }),
-        }
-      );
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `HTTPエラー ${res.status}`); }
-      const data = await res.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    }
-
     async function callOpenAIText(prompt, apiKey) {
       const cleanKey = (apiKey || '').trim();
       // Fetch APIはヘッダー値にISO-8859-1範囲外の文字を許可しない
@@ -427,15 +402,11 @@ JSONのみ出力してください（説明不要）。
       };
 
       let lastError = '';
-      if (settings?.geminiApiKey) {
-        try { return tryParse(await callGeminiText(prompt, settings.geminiApiKey)); }
-        catch (e) { lastError = `Gemini: ${e.message}`; }
-      }
       if (settings?.openaiApiKey) {
         try { return tryParse(await callOpenAIText(prompt, settings.openaiApiKey)); }
         catch (e) { lastError = `OpenAI: ${e.message}`; }
       }
-      throw new Error(lastError || 'APIキーが未登録です。設定画面でGemini（無料）またはOpenAIのキーを登録してください');
+      throw new Error(lastError || 'APIキーが未登録です。設定画面でOpenAI APIキーを登録してください');
     }
 
     // ===== Google Sheets 連携 =====
@@ -1505,8 +1476,8 @@ JSONのみ出力してください（説明不要）。
 
     function SettingsModal({ settings, onSave, onClose }) {
       const [threshold, setThreshold] = useState(String(settings.profitThreshold ?? 15));
-      const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey ?? '');
       const [openaiKey, setOpenaiKey] = useState(settings.openaiApiKey ?? '');
+      const [aiPrompt, setAiPrompt] = useState(settings.aiPrompt ?? '');
       const [gasUrl, setGasUrl]       = useState(settings.gasUrl ?? '');
       const [aiRetry, setAiRetry]     = useState(String(settings.aiRetryCount ?? 5));
       return (
@@ -1524,17 +1495,39 @@ JSONのみ出力してください（説明不要）。
             </Field>
             <p className="text-xs text-gray-400 -mt-2 mb-4">AIが正しい形式で返答しない場合の最大リトライ回数（デフォルト: 5）</p>
 
-            <p className="text-xs font-medium text-gray-600 mb-2">写真自動入力 APIキー（登録済みのうち無料優先で自動選択）</p>
-            <ApiKeyField label="Google Gemini" badge="無料" placeholder="AIzaSy..." value={geminiKey} onChange={setGeminiKey} />
-            <p className="text-xs text-gray-400 -mt-2 mb-3">
-              無料枠モデルを自動選択（Flash Lite → 1.5 Flash → 2.0 Flash）
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline ml-1">キーを取得</a>
-            </p>
+            <p className="text-xs font-medium text-gray-600 mb-2">写真自動入力 APIキー</p>
             <ApiKeyField label="OpenAI GPT-4o" badge="有料" placeholder="sk-..." value={openaiKey} onChange={setOpenaiKey} />
             <p className="text-xs text-gray-400 -mt-2 mb-4">
               <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">キーを取得</a>
             </p>
             <p className="text-xs text-gray-400 mb-4">APIキーはこのデバイスのlocalStorageにのみ保存されます。</p>
+
+            <div className="border-t border-gray-100 pt-4 mb-4">
+              <details>
+                <summary className="text-xs font-medium text-gray-600 cursor-pointer hover:text-gray-800 select-none">
+                  写真生成プロンプトをカスタマイズ
+                </summary>
+                <div className="mt-2">
+                  <p className="text-xs text-gray-400 mb-1">
+                    空白の場合はデフォルトプロンプトを使用します。出力フォーマット部分は自動で付加されます。
+                  </p>
+                  <textarea
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-red-300"
+                    rows={10}
+                    value={aiPrompt}
+                    onChange={e => setAiPrompt(e.target.value)}
+                    placeholder={AI_LISTING_INSTRUCTIONS}
+                  />
+                  <button
+                    type="button"
+                    className="mt-1 text-xs text-gray-400 hover:text-red-500 underline"
+                    onClick={() => setAiPrompt('')}
+                  >
+                    デフォルトに戻す
+                  </button>
+                </div>
+              </details>
+            </div>
 
             <div className="border-t border-gray-100 pt-4 mb-4">
               <p className="text-xs font-medium text-gray-600 mb-1">Google スプレッドシート連携</p>
@@ -1598,7 +1591,7 @@ JSONのみ出力してください（説明不要）。
             <div className="flex gap-2">
               <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">キャンセル</button>
               <button
-                onClick={() => { onSave({ profitThreshold: parseInt(threshold) || 15, geminiApiKey: geminiKey.trim(), openaiApiKey: openaiKey.trim(), gasUrl: gasUrl.trim(), aiRetryCount: Math.min(10, Math.max(1, parseInt(aiRetry) || 5)) }); onClose(); }}
+                onClick={() => { onSave({ profitThreshold: parseInt(threshold) || 15, openaiApiKey: openaiKey.trim(), gasUrl: gasUrl.trim(), aiRetryCount: Math.min(10, Math.max(1, parseInt(aiRetry) || 5)), aiPrompt: aiPrompt.trim() }); onClose(); }}
                 className="flex-1 py-2 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600"
               >
                 保存
