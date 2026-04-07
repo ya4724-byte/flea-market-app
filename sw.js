@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flea-market-v1';
+const CACHE_NAME = 'flea-market-v1.6.0';
 
 // キャッシュするリソース
 const PRECACHE = [
